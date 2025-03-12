@@ -1,12 +1,13 @@
 
 import random
 
-from Raft.Log import RaftLog
-from Raft.ServerState import RaftServerState
 from Raft.Dto.AppendEntriesRequest import AppendEntriesRequest
 from Raft.Dto.AppendEntriesResponse import AppendEntriesResponse
 from Raft.Dto.RequestVoteRequest import RequestVoteRequest
 from Raft.Dto.RequestVoteResponse import RequestVoteResponse
+
+from Raft.RaftLog import RaftLog
+from Raft.RaftServerState import RaftServerState
 
 
 class RaftServer:
