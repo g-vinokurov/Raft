@@ -2,7 +2,7 @@
 import pydantic
 
 
-class RaftCmd(pydantic.BaseModel):
+class Cmd(pydantic.BaseModel):
     name: str
     args: list = []
     kwargs: dict = {}

@@ -2,6 +2,6 @@
 import pydantic
 
 
-class RaftRequestVoteResponse(pydantic.BaseModel):
+class RequestVoteResponse(pydantic.BaseModel):
     term: int
     voteGranted: bool

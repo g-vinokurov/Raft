@@ -2,7 +2,7 @@
 import pydantic
 
 
-class RaftRequestVoteRequest(pydantic.BaseModel):
+class RequestVoteRequest(pydantic.BaseModel):
     term: int
     candidateId: str
     lastLogIndex: int

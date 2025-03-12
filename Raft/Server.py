@@ -1,12 +1,12 @@
 
 import random
 
-from Raft.RaftLog import RaftLog
-from Raft.RaftServerState import RaftServerState
-from Raft.Dto.RaftAppendEntriesRequest import RaftAppendEntriesRequest
-from Raft.Dto.RaftAppendEntriesResponse import RaftAppendEntriesResponse
-from Raft.Dto.RaftRequestVoteRequest import RaftRequestVoteRequest
-from Raft.Dto.RaftRequestVoteResponse import RaftRequestVoteResponse
+from Raft.Log import RaftLog
+from Raft.ServerState import RaftServerState
+from Raft.Dto.AppendEntriesRequest import AppendEntriesRequest
+from Raft.Dto.AppendEntriesResponse import AppendEntriesResponse
+from Raft.Dto.RequestVoteRequest import RequestVoteRequest
+from Raft.Dto.RequestVoteResponse import RequestVoteResponse
 
 
 class RaftServer:
@@ -32,13 +32,13 @@ class RaftServer:
     def _send_request_vote(self):
         pass
 
-    def _recv_request_vote(self, request: RaftRequestVoteRequest):
+    def _recv_request_vote(self, request: RequestVoteRequest):
         pass
 
     def _send_append_entries(self):
         pass
 
-    def _recv_append_entries(self, request: RaftAppendEntriesRequest):
+    def _recv_append_entries(self, request: AppendEntriesRequest):
         pass
     
     def _start_election(self):
