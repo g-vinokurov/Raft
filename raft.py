@@ -2,6 +2,7 @@
 import enum
 import random
 import pydantic
+import json
 
 from typing import Literal
 
@@ -15,6 +16,7 @@ class Timer:
         self._timeout = timeout / 1000
         self._callback = callback
         self._task = None
+        self._is_cancelled = False
     
     async def start(self):
         self._task = asyncio.create_task(self._job())
@@ -27,6 +29,9 @@ class Timer:
     def cancel(self):
         if self._task is None:
             return
+        if self._is_cancelled:
+            return
+        self._is_cancelled = True
         self._task.cancel()
 
 
@@ -98,18 +103,25 @@ class RaftServerState(enum.Enum):
 
 class RaftLog:
     def __init__(self):
-        self._entries = []
+        self._entries : list[RaftLogEntry] = []
     
     def add(self, cmd: RaftLogEntryCmd, term: int):
         index = len(self._entries) + 1
         entry = RaftLogEntry(cmd, index, term)
         self._entries.append(entry)
     
-    def __getitem__(self, key: int):
+    @property
+    def last(self):
+        return self._entries[-1]
+    
+    def __getitem__(self, key: int) -> RaftLogEntry:
         return self._entries[key]
     
     def __len__(self):
         return len(self._entries)
+    
+    def __bool__(self):
+        return len(self._entries) > 0
 
 
 class RaftServer:
@@ -122,9 +134,11 @@ class RaftServer:
         self._state = RaftServerState.Follower
         self._this = RaftNodeAddress(this)
         self._others = list(map(RaftNodeAddress, others))
+        
+        self._leader : RaftNodeAddress | None = None
     
         self._current_term = 0
-        self._voted_for = None
+        self._voted_for : RaftNodeAddress | None = None
         self._log = RaftLog()
 
         self._commit_index = 0
@@ -190,11 +204,11 @@ class RaftServer:
         except KeyboardInterrupt:
             await site.stop()
     
-    async def _send_rpc(self, node: RaftNodeAddress, url: str, json: dict) -> dict | None:
+    async def _send_rpc(self, node: RaftNodeAddress, url: str, data: dict) -> dict | None:
         url = f'http://{node.host}:{node.port}{url}'
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=json) as response:
+                async with session.post(url, json=data) as response:
                     if response.status == 200:
                         return await response.json()
                     return None
@@ -208,6 +222,9 @@ class RaftServer:
         await self._election_timer.start()
     
     async def _start_election(self):
+        if self._state == RaftServerState.Leader:
+            return
+        
         self.log('Start election...')
 
         if self._state == RaftServerState.Follower:
@@ -220,7 +237,7 @@ class RaftServer:
         votes = 1
         votes += await self._request_votes()
 
-        self.log(f'Votes received: {votes}')
+        self.log(f'Total Votes: {votes}')
 
         if votes > len(self._others) / 2:
             self.log('I try to become Leader')
@@ -239,7 +256,7 @@ class RaftServer:
         
         __tasks = []
         for node in self._others:
-            __task = asyncio.create_task(self._append_entries(node))
+            __task = asyncio.create_task(self._append_entries(node, True))
             __tasks.append(__task)
         await self._heartbeat_timer.start()
         
@@ -253,7 +270,7 @@ class RaftServer:
         self.log('Try request votes...')
 
         last_log_index = len(self._log)
-        last_log_term = self._log[-1] if last_log_index else 0
+        last_log_term = self._log.last if self._log else 0
       
         data = RaftRequestVoteRequest(
             term = self._current_term,
@@ -272,10 +289,10 @@ class RaftServer:
         try:
             responses = await asyncio.wait_for(
                 asyncio.gather(*__tasks, return_exceptions=True),
-                timeout=self._election_timeout
+                timeout=self._election_timeout / 1000
             )
         except asyncio.TimeoutError as e:
-            self.log(f'Request votes: timeout error')
+            self.log(f'Request votes: Timeout error')
             return 0
         
         votes = 0
@@ -286,30 +303,82 @@ class RaftServer:
             try:
                 r = RaftRequestVoteResponse(**r)
             except pydantic.ValidationError as e:
-                self.log(f'Response parsing error: {e}')
+                self.log(f'Request Votes: Response parsing error: {e}')
                 continue
             if r.voteGranted:
                 votes += 1
         return votes
     
+    async def _become_follower(self, term: int):
+        self._log(f'Became Follower with term {term}')
+        self._current_term = term
+        self._state = RaftServerState.Follower
+        self._voted_for = None
+        self._leader = None
+    
     async def _become_leader(self):
         pass
 
-    async def _append_entries(self, node: RaftNodeAddress, is_heartbeat: bool = True):
+    async def _append_entries(self, node: RaftNodeAddress, is_heartbeat: bool = False):
         pass
     
-    async def _receive_append_entries(self):
+    async def _raft_rpc_request_vote(self, request: web.Request):
+        try:
+            data = await request.json()
+            r = RaftRequestVoteRequest(**data)
+        except (json.JSONDecodeError, pydantic.ValidationError):
+            self.log('Raft RCP: Request Vote: Request parsing error')
+            msg = {'error': 'Invalid JSON'}
+            return web.json_response(msg, status=400)
+        
+        term = r.term
+        candidateId = r.candidateId
+        lastLogIndex = r.lastLogIndex
+        lastLogTerm = r.lastLogTerm
+        
+        if term < self._current_term:
+            response = RaftRequestVoteResponse(
+                self._current_term, False
+            ).model_dump()
+            return web.json_response(response)
+        
+        if term > self._current_term:
+            await self._become_follower(term)
+        
+        if self._voted_for is not None and self._voted_for != candidateId:
+            response = RaftRequestVoteResponse(
+                self._current_term, False
+            ).model_dump()
+            return web.json_response(response)
+        
+        if lastLogIndex < len(self._log):
+            response = RaftRequestVoteResponse(
+                self._current_term, False
+            ).model_dump()
+            return web.json_response(response)
+        
+        if not self._log or lastLogTerm >= self._log.last.term:
+            self._voted_for = RaftNodeAddress(candidateId)
+            await self._reset_election_timer()
+
+            response = RaftRequestVoteResponse(
+                self._current_term, True
+            ).model_dump()
+            return web.json_response(response)
+        
+        response = RaftRequestVoteResponse(
+            self._current_term, False
+        ).model_dump()
+        return web.json_response(response)
+    
+    async def _raft_rpc_append_entries(self, request: web.Request):
         # if term < self.current_term:
         #     return False
-        # 
         # self.reset_election_timer()
-        # 
         # if self.state == 'candidate' and term > self.current_term:
         #     self.state = 'follower'
-        # 
         # self.current_term = term
         # self.leader_id = leader_id
-        # 
         # if len(self.log) > prev_log_index and self.log[prev_log_index]['term'] == prev_log_term:
         #     self.log = self.log[:prev_log_index + 1] + entries
         #     if leader_commit > self.commit_index:
@@ -317,23 +386,5 @@ class RaftServer:
         #     return True
         # else:
         #     return False
+        # return web.Resource(text='entries!')
         pass
-    
-    async def _receive_request_vote(self):
-        # if term < self.current_term:
-        #     return False
-        # 
-        # if (self.voted_for is None or self.voted_for == candidate_id) and \
-        #    (last_log_index >= len(self.log) - 1 and last_log_term >= self.log[-1]['term'] if self.log else True):
-        #     self.voted_for = candidate_id
-        #     self.reset_election_timer()
-        #     return True
-        # else:
-        #     return False
-        pass
-    
-    async def _raft_rpc_request_vote(self, request: web.Request):
-        return web.Response(text='vote!')
-    
-    async def _raft_rpc_append_entries(self, request: web.Request):
-        return web.Resource(text='entries!')

@@ -20,23 +20,3 @@ class Storage(raft.RaftServer):
 if __name__ == '__main__':
     server = Storage('localhost:9001', ['localhost:9002', 'localhost:9003'])
     server.start()
-
-# import asyncio
-# 
-# 
-# async def f(arg):
-#     print(arg)
-#     await asyncio.sleep(2)
-# 
-# 
-# async def main():
-#     tasks = []
-#     for i in range(5):
-#         task = asyncio.create_task(f(i))
-#         tasks.append(task)
-# 
-#     for task in tasks:
-#         await task
-# 
-# 
-# asyncio.run(main())
