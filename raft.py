@@ -7,6 +7,7 @@ from typing import Literal
 
 import asyncio
 import aiohttp.web as web
+import aiohttp
 
 
 class Timer:
@@ -42,6 +43,13 @@ class RaftNodeAddress:
     @property
     def port(self):
         return self._port
+    
+    def __str__(self):
+        return f'{self._host}:{self._port}'
+
+
+class TimeoutError(asyncio.TimeoutError):
+    pass
 
 
 class RaftLogEntryCmd(pydantic.BaseModel):
@@ -96,9 +104,18 @@ class RaftLog:
         index = len(self._entries) + 1
         entry = RaftLogEntry(cmd, index, term)
         self._entries.append(entry)
+    
+    def __getitem__(self, key: int):
+        return self._entries[key]
+    
+    def __len__(self):
+        return len(self._entries)
 
 
 class RaftServer:
+    _RPC_REQUEST_VOTE_URL = '/raft-rpc/request-vote'
+    _RPC_APPEND_ENTRIES_URL = '/raft-rpc/append-entries'
+
     def __init__(self, this: str, others: list[str] = [], echo: bool = True):
         self._echo = echo
 
@@ -153,8 +170,8 @@ class RaftServer:
 
     async def _run(self):
         self._app.add_routes([
-            web.post('/raft-rpc/request-vote', self._raft_rpc_request_vote),
-            web.post('/raft-rpc/append-entries', self._raft_rpc_append_entries),
+            web.post(self._RPC_REQUEST_VOTE_URL, self._raft_rpc_request_vote),
+            web.post(self._RPC_APPEND_ENTRIES_URL, self._raft_rpc_append_entries),
         ])
 
         runner = web.AppRunner(self._app)
@@ -173,6 +190,18 @@ class RaftServer:
         except KeyboardInterrupt:
             await site.stop()
     
+    async def _send_rpc(self, node: RaftNodeAddress, url: str, json: dict) -> dict | None:
+        url = f'http://{node.host}:{node.port}{url}'
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=json) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return None
+        except Exception as e:
+            self.log(f'Error sending RPC to {url}: {e}')
+            return None
+    
     async def _reset_election_timer(self):
         self._election_timeout = 500 + random.randint(0, 200)
         self._election_timer = Timer(self._election_timeout, self._start_election)
@@ -189,26 +218,18 @@ class RaftServer:
         self._voted_for = self._this
         
         votes = 1
+        votes += await self._request_votes()
 
-        await self._reset_election_timer()
-        # if self.state == 'follower':
-        #     self.state = 'candidate'
-        # self.current_term += 1
-        # self.voted_for = self.node_id
-        # votes_received = 1
-        # 
-        # for peer in self.peers:
-        #     if self.request_vote(peer):
-        #         votes_received += 1
-        # 
-        # if votes_received > len(self.peers) / 2:
-        #     self.state = 'leader'
-        #     self.election_timer.cancel()
-        #     self.send_heartbeats()
-        # else:
-        #     self.state = 'follower'
-        #     self.reset_election_timer()
-        pass
+        self.log(f'Votes received: {votes}')
+
+        if votes > len(self._others) / 2:
+            self.log('I try to become Leader')
+            await self._become_leader()
+        else:
+            self.log('I got too few votes, now I am Follower again')
+            self._state = RaftServerState.Follower
+            await self._reset_election_timer()
+        return
 
     async def _send_heartbeats(self):
         if not self._state == RaftServerState.Leader:
@@ -225,12 +246,57 @@ class RaftServer:
         for __task in __tasks:
             await __task
     
-    async def _request_vote(self, peer):
-        # return random.choice([True, False])
+    async def _request_votes(self):
+        if not self._state == RaftServerState.Candidate:
+            return
+        
+        self.log('Try request votes...')
+
+        last_log_index = len(self._log)
+        last_log_term = self._log[-1] if last_log_index else 0
+      
+        data = RaftRequestVoteRequest(
+            term = self._current_term,
+            candidateId = str(self._this),
+            lastLogIndex = last_log_index,
+            lastLogTerm = last_log_term
+        ).model_dump()
+
+        route = self._RPC_REQUEST_VOTE_URL
+
+        __tasks = []
+        for node in self._others:
+            __task = asyncio.create_task(self._send_rpc(node, route, data))
+            __tasks.append(__task)
+
+        try:
+            responses = await asyncio.wait_for(
+                asyncio.gather(*__tasks, return_exceptions=True),
+                timeout=self._election_timeout
+            )
+        except asyncio.TimeoutError as e:
+            self.log(f'Request votes: timeout error')
+            return 0
+        
+        votes = 0
+
+        for r in responses:
+            if r is None:
+                continue
+            try:
+                r = RaftRequestVoteResponse(**r)
+            except pydantic.ValidationError as e:
+                self.log(f'Response parsing error: {e}')
+                continue
+            if r.voteGranted:
+                votes += 1
+        return votes
+    
+    async def _become_leader(self):
         pass
 
-    async def _append_entries(self, node: str, is_heartbeat: bool = True):
-        print(f'append entries: {node}, {is_heartbeat}')
+    async def _append_entries(self, node: RaftNodeAddress, is_heartbeat: bool = True):
+        pass
     
     async def _receive_append_entries(self):
         # if term < self.current_term:
