@@ -3,6 +3,8 @@ import enum
 import random
 import pydantic
 
+from typing import Literal
+
 import asyncio
 import aiohttp.web as web
 
@@ -25,6 +27,21 @@ class Timer:
         if self._task is None:
             return
         self._task.cancel()
+
+
+class RaftNodeAddress:
+    def __init__(self, address: str):
+        host, port = address.split(':')
+        self._host = host
+        self._port = int(port)
+    
+    @property
+    def host(self):
+        return self._host
+    
+    @property
+    def port(self):
+        return self._port
 
 
 class RaftLogEntryCmd(pydantic.BaseModel):
@@ -82,10 +99,12 @@ class RaftLog:
 
 
 class RaftServer:
-    def __init__(self, this: str, others: list[str] = []):
+    def __init__(self, this: str, others: list[str] = [], echo: bool = True):
+        self._echo = echo
+
         self._state = RaftServerState.Follower
-        self._id = this
-        self._others = others
+        self._this = RaftNodeAddress(this)
+        self._others = list(map(RaftNodeAddress, others))
     
         self._current_term = 0
         self._voted_for = None
@@ -94,8 +113,8 @@ class RaftServer:
         self._commit_index = 0
         self._last_applied = 0
 
-        self._next_index = {}
-        self._match_index = {}
+        self._next_index : dict[str, int] = {}
+        self._match_index : dict[str, int] = {}
 
         self._election_timeout = 500 + random.randint(0, 200)
         self._election_timer = Timer(self._election_timeout, self._start_election)
@@ -103,29 +122,56 @@ class RaftServer:
         self._heartbeat_timeout = 500
         self._heartbeat_timer = Timer(self._heartbeat_timeout, self._send_heartbeats)
 
-        self._host = str(this.split(':')[0])
-        self._port = int(this.split(':')[1])
-
         self._app = web.Application()
+        self._is_running = False
+    
+    def start(self):
+        try:
+            asyncio.run(self._run())
+        except KeyboardInterrupt:
+            self.stop()
+    
+    def stop(self):
+        self.log('Stopping...')
+        self._is_running = False
+
+    def log(self, msg):
+        if not self._echo:
+            return
+        print(msg)
+    
+    def route(self, url: str, handler, method: Literal['get', 'post', 'put', 'delete'] = 'get'):
+        if method == 'get':
+            self._app.add_routes([web.get(url, handler)])
+        if method == 'post':
+            self._app.add_routes([web.post(url, handler)])
+        if method == 'put':
+            self._app.add_routes([web.put(url, handler)])
+        if method == 'delete':
+            self._app.add_routes([web.delete(url, handler)])
+        return
+
+    async def _run(self):
         self._app.add_routes([
             web.post('/raft-rpc/request-vote', self._raft_rpc_request_vote),
             web.post('/raft-rpc/append-entries', self._raft_rpc_append_entries),
         ])
-    
-    def start(self):
-        asyncio.run(self._run())
 
-    async def _run(self):
         runner = web.AppRunner(self._app)
         await runner.setup()
 
-        site = web.TCPSite(runner, self._host, self._port)
+        site = web.TCPSite(runner, self._this.host, self._this.port)
         await site.start()
+
+        self._is_running = True
 
         await self._reset_election_timer()
         
-        while True:
-            await asyncio.sleep(120)
+        try:
+            while self._is_running:
+                await asyncio.sleep(2)
+        except KeyboardInterrupt:
+            await site.stop()
     
     async def _reset_election_timer(self):
         self._election_timeout = 500 + random.randint(0, 200)
@@ -133,7 +179,17 @@ class RaftServer:
         await self._election_timer.start()
     
     async def _start_election(self):
-        print('start election')
+        self.log('Start election...')
+
+        if self._state == RaftServerState.Follower:
+            self.log('I was Follower, now I am Candidate')
+            self._state = RaftServerState.Candidate
+        
+        self._current_term += 1
+        self._voted_for = self._this
+        
+        votes = 1
+
         await self._reset_election_timer()
         # if self.state == 'follower':
         #     self.state = 'candidate'
@@ -158,7 +214,7 @@ class RaftServer:
         if not self._state == RaftServerState.Leader:
             return
         
-        # print('send heartbeats')
+        self.log('Send heartbeats')
         
         __tasks = []
         for node in self._others:

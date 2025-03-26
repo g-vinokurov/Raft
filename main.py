@@ -7,11 +7,9 @@ class Storage(raft.RaftServer):
     def __init__(self, this: str, others: list[str] = []):
         super().__init__(this, others)
 
-        self._app.add_routes([
-            web.get('/api/get', self._api_get),
-            web.get('/api/put', self._api_put),
-        ])
-    
+        self.route('/api/get', self._api_get)
+        self.route('/api/put', self._api_put)
+
     async def _api_get(self, request: web.Request):
         return web.Response(text='get')
     
