@@ -110,11 +110,14 @@ class RaftLog:
         entry = RaftLogEntry(cmd, index, term)
         self._entries.append(entry)
     
+    def update(self, entries: list[RaftLogEntry]):
+        self._entries = entries[::]
+    
     @property
     def last(self):
         return self._entries[-1]
     
-    def __getitem__(self, key: int | slice) -> RaftLogEntry:
+    def __getitem__(self, key) -> RaftLogEntry:
         return self._entries[key]
     
     def __len__(self):
@@ -353,7 +356,7 @@ class RaftServer:
         # When sending an AppendEntries RPC, the leader includes the index
         # and term of the entry in its log that immediately precedes
         # the new entries.
-        next_log_index = self._next_index.get(node, 0)
+        next_log_index = self._next_index.get(node, 1)
         prev_log_index = next_log_index - 1
         prev_log_term = self._log[prev_log_index] if self._log else 0
     
@@ -403,15 +406,16 @@ class RaftServer:
             # Update nextIndex and matchIndex for Follower
             self._next_index[node] = prev_log_index + len(entries) - 1
             self._match_index[node] = self._next_index[node] - 1
-            # Update commitIndex
+            # Update commitIndex?
             # ...
-        else:
-            # After a rejection, the leader decrements nextIndex and retries
-            # the AppendEntries RPC.
-            self._next_index[node] = max(1, self._next_index[node] - 1)
-            # When nextIndex will reach a point where the leader and follower logs match,
-            # AppendEntries will succeed, which removes any conflicting entries 
-            # in the follower’s log and appends entries from the leader’s log (if any).
+            return
+        
+        # After a rejection, the leader decrements nextIndex and retries
+        # the AppendEntries RPC.
+        self._next_index[node] = max(1, self._next_index[node] - 1)
+        # When nextIndex will reach a point where the leader and follower logs match,
+        # AppendEntries will succeed, which removes any conflicting entries 
+        # in the follower’s log and appends entries from the leader’s log (if any).
         return
 
     async def _raft_rpc_request_vote(self, request: web.Request):
@@ -424,7 +428,7 @@ class RaftServer:
             return web.json_response(msg, status=400)
         
         term = r.term
-        candidateId = r.candidateId
+        candidateId = RaftNodeAddress(r.candidateId)
         lastLogIndex = r.lastLogIndex
         lastLogTerm = r.lastLogTerm
         
@@ -461,7 +465,8 @@ class RaftServer:
             ).model_dump()
             return web.json_response(response)
         
-        self._voted_for = RaftNodeAddress(candidateId)
+        self._voted_for = candidateId
+
         await self._reset_election_timer()
 
         response = RaftRequestVoteResponse(
@@ -470,19 +475,64 @@ class RaftServer:
         return web.json_response(response)
     
     async def _raft_rpc_append_entries(self, request: web.Request):
-        # if term < self.current_term:
-        #     return False
-        # self.reset_election_timer()
-        # if self.state == 'candidate' and term > self.current_term:
-        #     self.state = 'follower'
-        # self.current_term = term
-        # self.leader_id = leader_id
-        # if len(self.log) > prev_log_index and self.log[prev_log_index]['term'] == prev_log_term:
-        #     self.log = self.log[:prev_log_index + 1] + entries
-        #     if leader_commit > self.commit_index:
-        #         self.commit_index = min(leader_commit, len(self.log) - 1)
-        #     return True
-        # else:
-        #     return False
-        # return web.Resource(text='entries!')
-        pass
+        try:
+            data = await request.json()
+            r = RaftAppendEntriesRequest(**data)
+        except (json.JSONDecodeError, pydantic.ValidationError):
+            self.echo('Raft RCP: Append Entries: Request parsing error')
+            msg = {'error': 'Invalid JSON'}
+            return web.json_response(msg, status=400)
+        
+        term = r.term
+        leaderId = RaftNodeAddress(r.leaderId)
+        prevLogIndex = r.prevLogIndex
+        prevLogTerm = r.prevLogTerm
+        leaderCommit = r.leaderCommit
+        entries = r.entries
+
+        response = RaftAppendEntriesResponse(
+            self._current_term, False
+        ).model_dump()
+
+        # Reply false if term < currentTerm
+        if term < self._current_term:
+            return web.json_response(response)
+        
+        # If any append entries RPC received - reset election timer
+        self._reset_election_timer()
+        
+        # If RPC request or response contains term T > currentTerm: 
+        # set currentTerm = T, convert to follower
+        if term > self._current_term:
+            await self._become_follower(term)
+        
+        self._leader = leaderId
+        
+        # Reply false if log doesn’t contain an entry at prevLogIndex 
+        # whose term matches prevLogTerm
+        if prevLogIndex > 0:
+            if len(self._log) < prevLogIndex:
+                return web.json_response(response)
+            # If the follower does not find an entry in
+            # its log with the same index and term, then it refuses the
+            # new entries. 
+            if self._log[prevLogIndex - 1].term != prevLogTerm:
+                return web.json_response(response)
+        
+        # If existing entry conflicts with new one, delete it and next
+        # To bring a follower’s log into consistency with its own,
+        # the leader must find the latest log entry where the two
+        # logs agree, delete any entries in the follower’s log after
+        # that point, and send the follower all of the leader’s entries
+        # after that point.
+        if entries:
+            self._log.update(self._log[:prevLogIndex] + entries)
+        
+        # Update commit index if leaderCommit > commitIndex
+        if leaderCommit > self._commit_index:
+            self.commit_index = min(leaderCommit, len(self._log))
+
+        response = RaftAppendEntriesResponse(
+            self._current_term, True
+        ).model_dump()
+        return web.json_response(response)
