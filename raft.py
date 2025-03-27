@@ -150,6 +150,8 @@ class RaftServer:
         self._next_index : dict[str, int] = {}
         self._match_index : dict[str, int] = {}
 
+        # self._apply = lambda x: x
+
         self._election_timeout = 500 + random.randint(0, 200)
         self._election_timer = Timer(self._election_timeout, self._start_election)
 
@@ -344,6 +346,7 @@ class RaftServer:
         # for each server, 
         # index of highest log entry known to be replicated on server
         self._match_index = { node: 0 for node in self._others }
+        await self._send_heartbeats()
 
     async def _append_entries(self, node: RaftNodeAddress, is_heartbeat: bool = False):
         # Invoked by leader to replicate log entries
@@ -406,8 +409,15 @@ class RaftServer:
             # Update nextIndex and matchIndex for Follower
             self._next_index[node] = prev_log_index + len(entries) - 1
             self._match_index[node] = self._next_index[node] - 1
-            # Update commitIndex?
+            
+            # If there exists an N such that N > commitIndex, a majority
+            # of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+            # set commitIndex = N 
             # ...
+            match_indexs = list(self._match_index.values())
+            n = max(set(match_indexs), key=match_indexs.count)
+            if n > self._commit_index and self._log[n - 1].term == self._current_term:
+                self._commit_index = n
             return
         
         # After a rejection, the leader decrements nextIndex and retries
@@ -427,10 +437,16 @@ class RaftServer:
             msg = {'error': 'Invalid JSON'}
             return web.json_response(msg, status=400)
         
+        self.echo(f'RPC REQUEST VOTE REQUEST: {data}')
+        
         term = r.term
         candidateId = RaftNodeAddress(r.candidateId)
         lastLogIndex = r.lastLogIndex
         lastLogTerm = r.lastLogTerm
+
+        response = RaftRequestVoteResponse(
+            self._current_term, False
+        ).model_dump()
         
         # If RPC request or response contains term T > currentTerm: 
         # set currentTerm = T, convert to follower
@@ -439,30 +455,18 @@ class RaftServer:
         
         #  Reply false if term < currentTerm
         if term < self._current_term:
-            response = RaftRequestVoteResponse(
-                self._current_term, False
-            ).model_dump()
             return web.json_response(response)
         
         # if already voted for self or another candidate
         if self._voted_for is not None and self._voted_for != candidateId:
-            response = RaftRequestVoteResponse(
-                self._current_term, False
-            ).model_dump()
             return web.json_response(response)
         
         # if candidate’s log is not up-to-date
         if lastLogIndex < len(self._log):
-            response = RaftRequestVoteResponse(
-                self._current_term, False
-            ).model_dump()
             return web.json_response(response)
         
         # if candidate’s log is not up-to-date
         if self._log and lastLogTerm < self._log.last.term:
-            response = RaftRequestVoteResponse(
-                self._current_term, False
-            ).model_dump()
             return web.json_response(response)
         
         self._voted_for = candidateId
@@ -482,6 +486,8 @@ class RaftServer:
             self.echo('Raft RCP: Append Entries: Request parsing error')
             msg = {'error': 'Invalid JSON'}
             return web.json_response(msg, status=400)
+        
+        self.echo(f'RPC APPEND ENTRIES REQUEST: {data}')
         
         term = r.term
         leaderId = RaftNodeAddress(r.leaderId)
@@ -530,7 +536,13 @@ class RaftServer:
         
         # Update commit index if leaderCommit > commitIndex
         if leaderCommit > self._commit_index:
-            self.commit_index = min(leaderCommit, len(self._log))
+            self._commit_index = min(leaderCommit, len(self._log))
+        
+        # If commitIndex > lastApplied: increment lastApplied, apply
+        # log[lastApplied] to state machine
+        if self._commit_index > self._last_applied:
+            self._last_applied = self._commit_index
+            # self._apply(self._log[self._last_applied - 1])
 
         response = RaftAppendEntriesResponse(
             self._current_term, True
