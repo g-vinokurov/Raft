@@ -1,25 +1,25 @@
 
-import aiohttp.web as web
-import raft
 import sys
 import asyncio
+
+import raft
 
 
 class Storage(raft.RaftServer):
     def __init__(self, this: str, others: list[str] = []):
         super().__init__(this, others)
-
-        self.route('/api/get', self._api_get)
-        self.route('/api/put', self._api_put)
-
-    async def _api_get(self, request: web.Request):
-        return web.Response(text='get')
+        
+        # self.route('/api/get', self._api_get)
+        # self.route('/api/put', self._api_put)
     
-    async def _api_put(self, request: web.Request):
-        return web.Response(text='put')
+    def _api_get(self, request: dict) -> dict:
+        return {'msg': 'Not implemented'}
+    
+    def _api_put(self, request: dict) -> dict:
+        return {'msg': 'Not implemented'}
 
 
-async def main():
+async def main(this_idx):
     servers = [
         'localhost:9001',
         'localhost:9002',
@@ -27,12 +27,11 @@ async def main():
         'localhost:9004',
         'localhost:9005'
     ]
-    this_id = int(sys.argv[1])
-    this = servers.pop(this_id - 1)
+    
+    this = servers.pop(this_idx - 1)
     others = servers
-    server = Storage(this, others)
-    task = asyncio.create_task(server.run())
-    await task
+    
+    await Storage(this, others).run()
 
 
-asyncio.run(main())
+asyncio.run(main(int(sys.argv[1])))
