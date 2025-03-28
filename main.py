@@ -1,6 +1,8 @@
 
 import aiohttp.web as web
 import raft
+import sys
+import asyncio
 
 
 class Storage(raft.RaftServer):
@@ -17,6 +19,20 @@ class Storage(raft.RaftServer):
         return web.Response(text='put')
 
 
-if __name__ == '__main__':
-    server = Storage('localhost:9001', ['localhost:9002', 'localhost:9003'])
-    server.start()
+async def main():
+    servers = [
+        'localhost:9001',
+        'localhost:9002',
+        'localhost:9003', 
+        'localhost:9004',
+        'localhost:9005'
+    ]
+    this_id = int(sys.argv[1])
+    this = servers.pop(this_id - 1)
+    others = servers
+    server = Storage(this, others)
+    task = asyncio.create_task(server.run())
+    await task
+
+
+asyncio.run(main())

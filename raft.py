@@ -24,15 +24,12 @@ class Timer:
 
     async def _job(self):
         await asyncio.sleep(self._timeout)
+        if self._is_cancelled:
+            return
         await self._callback()
 
     def cancel(self):
-        if self._task is None:
-            return
-        if self._is_cancelled:
-            return
         self._is_cancelled = True
-        self._task.cancel()
 
 
 class RaftNodeAddress:
@@ -155,17 +152,35 @@ class RaftServer:
         self._election_timeout = 500 + random.randint(0, 200)
         self._election_timer = Timer(self._election_timeout, self._start_election)
 
-        self._heartbeat_timeout = 500
+        self._heartbeat_timeout = 100
         self._heartbeat_timer = Timer(self._heartbeat_timeout, self._send_heartbeats)
 
         self._app = web.Application()
         self._is_running = False
     
-    def start(self):
+    async def run(self):
+        self._app.add_routes([
+            web.post(self._RPC_REQUEST_VOTE_URL, self._raft_rpc_request_vote),
+            web.post(self._RPC_APPEND_ENTRIES_URL, self._raft_rpc_append_entries),
+        ])
+
+        runner = web.AppRunner(self._app)
+        await runner.setup()
+
+        site = web.TCPSite(runner, self._this.host, self._this.port)
+        await site.start()
+
+        self._is_running = True
+
+        self.echo(f'Started! I am {self._this}')
+
+        await self._reset_election_timer()
+        
         try:
-            asyncio.run(self._run())
+            while self._is_running:
+                await asyncio.sleep(2)
         except KeyboardInterrupt:
-            self.stop()
+            await site.stop()
     
     def stop(self):
         self.echo('Stopping...')
@@ -186,33 +201,12 @@ class RaftServer:
         if method == 'delete':
             self._app.add_routes([web.delete(url, handler)])
         return
-
-    async def _run(self):
-        self._app.add_routes([
-            web.post(self._RPC_REQUEST_VOTE_URL, self._raft_rpc_request_vote),
-            web.post(self._RPC_APPEND_ENTRIES_URL, self._raft_rpc_append_entries),
-        ])
-
-        runner = web.AppRunner(self._app)
-        await runner.setup()
-
-        site = web.TCPSite(runner, self._this.host, self._this.port)
-        await site.start()
-
-        self._is_running = True
-
-        await self._reset_election_timer()
-        
-        try:
-            while self._is_running:
-                await asyncio.sleep(2)
-        except KeyboardInterrupt:
-            await site.stop()
     
     async def _send_rpc(self, node: RaftNodeAddress, url: str, data: dict) -> dict | None:
         url = f'http://{node.host}:{node.port}{url}'
         try:
             async with aiohttp.ClientSession() as session:
+                self.echo(f'{url} {data}')
                 async with session.post(url, json=data) as response:
                     if response.status == 200:
                         return await response.json()
@@ -224,6 +218,7 @@ class RaftServer:
     async def _reset_election_timer(self):
         # Reset timer with new random value of timeout
         # In order to avoid more than one elections for many vote attempts
+        self._election_timer.cancel()
         self._election_timeout = 500 + random.randint(0, 200)
         self._election_timer = Timer(self._election_timeout, self._start_election)
         await self._election_timer.start()
@@ -234,7 +229,7 @@ class RaftServer:
         if self._state == RaftServerState.Leader:
             return
         
-        self.echo('Start election...')
+        self.echo(f'Start election...')
         
         # On conversion to candidate, start election
         if self._state == RaftServerState.Follower:
@@ -247,8 +242,7 @@ class RaftServer:
         self._voted_for = self._this 
         votes = 1
         
-        # Reset election timer
-        await self._reset_election_timer()
+        self.echo(f'Term is {self._current_term}')
         
         # Send RequestVote RPCs to all other servers
         votes += await self._request_votes()
@@ -262,6 +256,7 @@ class RaftServer:
         else:
             self.echo('I got too few votes, now I am Follower again')
             self._state = RaftServerState.Follower
+            await self._reset_election_timer()
         return
 
     async def _send_heartbeats(self):
@@ -303,21 +298,23 @@ class RaftServer:
 
         __tasks = []
         for node in self._others:
-            __task = asyncio.create_task(self._send_rpc(node, route, data))
-            __tasks.append(__task)
-
-        try:
-            responses = await asyncio.wait_for(
-                asyncio.gather(*__tasks, return_exceptions=True),
-                timeout=self._election_timeout / 1000
+            __task = asyncio.create_task(
+                asyncio.wait_for(
+                    self._send_rpc(node, route, data),
+                    self._election_timeout / 1000
+                )
             )
-        except asyncio.TimeoutError as e:
-            self.echo(f'Request votes: Timeout error')
-            return 0
+            __tasks.append(__task)
         
         votes = 0
-
-        for r in responses:
+        for __task in __tasks:
+            try:
+                r = await __task
+            except asyncio.TimeoutError:
+                self.echo('Timeout Error')
+                continue
+             
+            self.echo(f'RESPONSE: {r}')
             if r is None:
                 continue
             try:
@@ -445,28 +442,34 @@ class RaftServer:
         lastLogTerm = r.lastLogTerm
 
         response = RaftRequestVoteResponse(
-            self._current_term, False
+            term = self._current_term, 
+            voteGranted = False
         ).model_dump()
         
         # If RPC request or response contains term T > currentTerm: 
         # set currentTerm = T, convert to follower
         if term > self._current_term:
+            self.echo(f'Handle Request Vote: 0: Become Follower')
             await self._become_follower(term)
         
         #  Reply false if term < currentTerm
         if term < self._current_term:
+            self.echo(f'Handle Request Vote: 1: {response}')
             return web.json_response(response)
         
         # if already voted for self or another candidate
         if self._voted_for is not None and self._voted_for != candidateId:
+            self.echo(f'Handle Request Vote: 2: {response}')
             return web.json_response(response)
         
         # if candidate’s log is not up-to-date
         if lastLogIndex < len(self._log):
+            self.echo(f'Handle Request Vote: 3: {response}')
             return web.json_response(response)
         
         # if candidate’s log is not up-to-date
         if self._log and lastLogTerm < self._log.last.term:
+            self.echo(f'Handle Request Vote: 4: {response}')
             return web.json_response(response)
         
         self._voted_for = candidateId
@@ -474,8 +477,10 @@ class RaftServer:
         await self._reset_election_timer()
 
         response = RaftRequestVoteResponse(
-            self._current_term, True
+            term = self._current_term, 
+            voteGranted = True
         ).model_dump()
+        self.echo(f'Handle Request Vote: 5: {response}')
         return web.json_response(response)
     
     async def _raft_rpc_append_entries(self, request: web.Request):
@@ -497,7 +502,8 @@ class RaftServer:
         entries = r.entries
 
         response = RaftAppendEntriesResponse(
-            self._current_term, False
+            term = self._current_term,
+            success = False
         ).model_dump()
 
         # Reply false if term < currentTerm
@@ -505,7 +511,7 @@ class RaftServer:
             return web.json_response(response)
         
         # If any append entries RPC received - reset election timer
-        self._reset_election_timer()
+        await self._reset_election_timer()
         
         # If RPC request or response contains term T > currentTerm: 
         # set currentTerm = T, convert to follower
@@ -545,6 +551,7 @@ class RaftServer:
             # self._apply(self._log[self._last_applied - 1])
 
         response = RaftAppendEntriesResponse(
-            self._current_term, True
+            term = self._current_term,
+            success = True
         ).model_dump()
         return web.json_response(response)
