@@ -3,6 +3,7 @@ import enum
 import random
 import pydantic
 import json
+import time
 
 import asyncio
 import aiohttp.web as web
@@ -13,14 +14,9 @@ class Timer:
     def __init__(self, timeout: int, callback):
         self._timeout = timeout / 1000
         self._callback = callback
-        self._task = None
         self._is_cancelled = False
     
     async def start(self):
-        self._task = asyncio.create_task(self._job())
-        await self._task
-    
-    async def _job(self):
         await asyncio.sleep(self._timeout)
         if self._is_cancelled:
             return
@@ -73,10 +69,7 @@ class RaftState(enum.Enum):
     Leader    = 2
 
 
-class RaftServer:
-    _RPC_REQUEST_VOTE_URL = '/raft/request-vote'
-    _RPC_APPEND_ENTRIES_URL = '/raft/append-entries'
-    
+class RaftServer:    
     def __init__(self, this: str, others: list[str] = [], echo: bool = True):
         self._echo = echo
         
@@ -113,10 +106,9 @@ class RaftServer:
         if self._is_running:
             return
         self._is_running = True
-
+        
         self._app.add_routes([
-            web.post(self._RPC_REQUEST_VOTE_URL, self._raft_rpc_request_vote),
-            web.post(self._RPC_APPEND_ENTRIES_URL, self._raft_rpc_append_entries),
+            web.post('/', self._rpc_handler),
         ])
         
         runner = web.AppRunner(self._app)
@@ -124,7 +116,7 @@ class RaftServer:
         
         site = web.TCPSite(runner, self._host, self._port)
         await site.start()
-
+        
         self.echo(f'SERVER STARTED. {self._this}')
         
         try:
@@ -132,13 +124,25 @@ class RaftServer:
                 await asyncio.sleep(2)
         except KeyboardInterrupt:
             await site.stop()
-            self.stop()
+        self.stop()
     
     def stop(self):
-        self.echo('STOPPING SERVER...')
+        if not self._is_running:
+            return
         self._is_running = False
+        
+        self.echo('STOPPING SERVER...')
     
     def echo(self, msg):
         if not self._echo:
             return
-        print(msg)
+        print(f'{msg}')
+    
+    async def _heartbeat(self):
+        pass
+    
+    async def _election(self):
+        pass
+    
+    async def _rpc_handler(self, request: web.Request):
+        return web.Response({'message': 'ok'})
