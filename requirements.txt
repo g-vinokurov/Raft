@@ -1,3 +1,4 @@
-pip==25.0.1
-pydantic==2.10.6
-aiohttp==3.11.13
+pip==25.0
+PyQt5==5.15.11
+protobuf==5.28.2
+dotenv==0.9.9
