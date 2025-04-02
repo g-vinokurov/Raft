@@ -10,6 +10,8 @@ from PyQt5.QtNetwork import QHostAddress
 from PyQt5.QtNetwork import QNetworkDatagram
 
 from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QObject
+from PyQt5.QtCore import pyqtSignal
 
 import Proto.raft_pb2 as protocol
 
@@ -27,8 +29,12 @@ class RaftState(enum.Enum):
     Leader    = 2
 
 
-class RaftServer:
-    def __init__(self):        
+class RaftServer(QObject):
+    updated = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        
         self.__is_configured = False
         self.__is_active = False
     
@@ -67,6 +73,8 @@ class RaftServer:
         self.__main_socket : QUdpSocket | None = None
         
         self.__is_configured = True
+
+        self.updated.emit()
     
     def start(self):
         if not self.__is_configured:
@@ -83,6 +91,8 @@ class RaftServer:
         self.__election_timer.start(self.__election_timeout)
 
         self.__is_active = True
+
+        self.updated.emit()
     
     def stop(self):
         if not self.__is_active:
@@ -97,6 +107,8 @@ class RaftServer:
         if self.__main_socket is not None:
             self.__main_socket.close()
         self.__main_socket = None
+
+        self.updated.emit()
     
     def __on_main_socket_ready_read(self):
         while self.__main_socket.hasPendingDatagrams():
