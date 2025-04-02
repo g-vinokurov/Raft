@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import QApplication
 
 from Gui.Widgets.Window import Window
 from State.State import State
+from Raft.Server import RaftServer
 
 
 class App(QApplication):
@@ -11,6 +12,7 @@ class App(QApplication):
         
         self._state = State()
         self._gui = Window()
+        self._server = RaftServer()
     
     @property
     def state(self):
@@ -19,6 +21,10 @@ class App(QApplication):
     @property
     def gui(self):
         return self._gui
+    
+    @property
+    def server(self):
+        return self._server
 
 
 app = App([])
