@@ -18,6 +18,32 @@ import Proto.raft_pb2 as protocol
 from Log import log
 
 
+class RaftLogEntry:
+    def __init__(self, cmd: str, term: int):
+        self._cmd = cmd
+        self._term = term
+    
+    @property
+    def cmd(self):
+        return self._cmd
+    
+    @property
+    def term(self):
+        return self._term
+    
+    def to_protobuf(self):
+        msg = protocol.LogEntry()
+        msg.term = self.term
+        msg.cmd = self.cmd
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, msg: protocol.LogEntry):
+        term = msg.term
+        cmd = msg.cmd
+        return cls(cmd, term)
+
+
 class RaftRequestVoteRequest:
     def __init__(self, term: int, candidateId: str, lastLogIndex: int, lastLogTerm: int):
         self.term = term
@@ -60,18 +86,52 @@ class RaftRequestVoteResponse:
         return cls(term, voteGranted)
 
 
-class RaftLogEntry:
-    def __init__(self, cmd: str, term: int):
-        self._cmd = cmd
-        self._term = term
+class RaftAppendEntriesRequest:
+    def __init__(self, term: int, leaderId: str, prevLogIndex: int, prevLogTerm: int, entries: list[RaftLogEntry], leaderCommit: int):
+        self.term = term
+        self.leaderId = leaderId
+        self.prevLogIndex = prevLogIndex
+        self.prevLogTerm = prevLogTerm
+        self.entries = entries[::]
+        self.leaderCommit = leaderCommit
     
-    @property
-    def cmd(self):
-        return self._cmd
+    def to_protobuf(self):
+        msg = protocol.AppendEntriesRequest()
+        msg.term = self.term
+        msg.leaderId = self.leaderId
+        msg.prevLogIndex = self.prevLogIndex
+        msg.prevLogTerm = self.prevLogTerm
+        msg.leaderCommit = self.leaderCommit
+        msg.entries.extend([entry.to_protobuf() for entry in self.entries])
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, msg: protocol.AppendEntriesRequest):
+        term = msg.term
+        leaderId = msg.leaderId
+        prevLogIndex = msg.prevLogIndex
+        prevLogTerm = msg.prevLogTerm
+        leaderCommit = msg.leaderCommit
+        entries = [RaftLogEntry.from_protobuf(x) for x in msg.entries]
+        return cls(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit)
+
+
+class RaftAppendEntriesResponse:
+    def __init__(self, term: int, success: bool):
+        self.term = term
+        self.success = success
     
-    @property
-    def term(self):
-        return self._term
+    def to_protobuf(self):
+        msg = protocol.AppendEntriesResponse()
+        msg.term = self.term
+        msg.success = self.success
+        return msg
+
+    @classmethod
+    def from_protobuf(cls, msg: protocol.AppendEntriesResponse):
+        term = msg.term
+        success = msg.success
+        return cls(term, success)
 
 
 class RaftState(enum.Enum):
@@ -304,7 +364,81 @@ class RaftServer(QObject):
         self.updated.emit()
     
     def __process_append_entries(self, ip: str, port: int, msg: protocol.Message):
-        pass
+        log.debug(f'__process_append_entries: From {ip}:{port}')
+
+        request = RaftAppendEntriesRequest.from_protobuf(msg.append_entries)
+
+        response = RaftAppendEntriesResponse(self.__current_term, False)
+
+        # Reply false if term < currentTerm
+        if request.term < self.__current_term:
+            log.debug(f'__process_append_entries: Request term less than current term')
+            msg = protocol.Message()
+            msg.append_entries_response.CopyFrom(response.to_protobuf())
+            return self.__send_raft_message(ip, port, msg)
+        
+        # If any append entries RPC received - reset election timer
+        self.__reset_election_timer()
+        
+        # If RPC request or response contains term T > currentTerm: 
+        # set currentTerm = T, convert to follower
+        if request.term > self.__current_term:
+            log.debug('__process_append_entries: My term is outdated')
+            self.__current_term = request.term
+            self.__state = RaftState.Follower
+            self.__voted_for = None
+            self.__votes = 0
+            self.__leader = None
+        
+        self.__leader = request.leaderId
+
+        self.updated.emit()
+        
+        # Reply false if log doesn’t contain an entry at prevLogIndex 
+        # whose term matches prevLogTerm
+        if request.prevLogIndex > 0:
+            if len(self.__log) < request.prevLogIndex:
+                log.debug(f'__process_append_entries: my log last index < request prev log index')
+                msg = protocol.Message()
+                msg.append_entries_response.CopyFrom(response.to_protobuf())
+                return self.__send_raft_message(ip, port, msg)
+            # If the follower does not find an entry in
+            # its log with the same index and term, then it refuses the
+            # new entries. 
+            if self.__log[request.prevLogIndex - 1].term != request.prevLogTerm:
+                log.debug(f'__process_append_entries: my log prev term != request prev log term')
+                msg = protocol.Message()
+                msg.append_entries_response.CopyFrom(response.to_protobuf())
+                return self.__send_raft_message(ip, port, msg)
+        
+        # If existing entry conflicts with new one, delete it and next
+        # To bring a follower’s log into consistency with its own,
+        # the leader must find the latest log entry where the two
+        # logs agree, delete any entries in the follower’s log after
+        # that point, and send the follower all of the leader’s entries
+        # after that point.
+        if request.entries:
+            self.__log = self.__log[:request.prevLogIndex] + request.entries
+        
+        # Update commit index if leaderCommit > commitIndex
+        if request.leaderCommit > self.__commit_index:
+            self.__commit_index = min(request.leaderCommit, len(self.__log))
+        
+        # If commitIndex > lastApplied: increment lastApplied, apply
+        # log[lastApplied] to state machine
+        if self.__commit_index > self.__last_applied:
+            self.__last_applied = self.__commit_index
+            # self._apply(self._log[self._last_applied - 1])
+
+        response.success = True
+
+        log.debug(f'__process_append_entries: Success')
+
+        self.updated.emit()
+
+        msg = protocol.Message()
+        msg.append_entries_response.CopyFrom(response.to_protobuf())
+        return self.__send_raft_message(ip, port, msg)
 
     def __process_append_entries_response(self, ip: str, port: int, msg: protocol.Message):
         pass
@@ -318,8 +452,7 @@ class RaftServer(QObject):
         log.debug('__heartbeat: Send heartbeats')
 
         for server in self.__others:
-            host, port = server.split(':')
-            self.__append_entries(host, int(port), is_heartbeat=True)
+            self.__append_entries(server, is_heartbeat=True)
         
         log.debug(f'__heartbeat: Heartbears are sent')
         
@@ -371,5 +504,45 @@ class RaftServer(QObject):
 
         self.updated.emit()
     
-    def __append_entries(self, ip: str, port: int, is_heartbeat: bool = False):
-        pass
+    def __append_entries(self, server: str, is_heartbeat: bool = False):
+        # Invoked by leader to replicate log entries
+        # Also used as heartbeat
+        if not self.__state == RaftState.Leader:
+            log.debug('__append_entries: I am not Leader')
+            return
+        
+        log.debug(f'__append_entries: Try for server {server}.')
+        
+        # When sending an AppendEntries RPC, the leader includes the index
+        # and term of the entry in its log that immediately precedes
+        # the new entries.
+        next_log_index = self.__next_index.get(server, 1)
+        prev_log_index = next_log_index - 1
+        prev_log_term = self.__log[prev_log_index].term if self.__log else 0
+        
+        # log entries to store (may send more than one for efficiency)
+        if next_log_index < len(self.__log):
+            entries = self.__log[next_log_index:]
+        else:
+            entries = []
+        
+        # empty for heartbeat
+        if is_heartbeat:
+            entries = []
+
+        request = RaftAppendEntriesRequest(
+            term = self.__current_term,
+            leaderId = str(self.__this),
+            prevLogIndex = prev_log_index,
+            prevLogTerm = prev_log_term,
+            entries = entries,
+            leaderCommit = self.__commit_index
+        )
+        
+        msg = protocol.Message()
+        msg.append_entries.CopyFrom(request.to_protobuf())
+        
+        host, port = server.split(':')
+        self.__send_raft_message(host, int(port), msg)
+
+        log.debug(f'__append_entries: Sent to {server}.')
