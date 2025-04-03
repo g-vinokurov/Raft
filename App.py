@@ -11,8 +11,8 @@ class App(QApplication):
         super().__init__(*args, **kwargs)
         
         self._state = State()
-        self._gui = Window()
         self._server = RaftServer()
+        self._gui = Window()
     
     @property
     def state(self):

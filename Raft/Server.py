@@ -210,8 +210,21 @@ class RaftServer(QObject):
     
     def stop(self):
         if not self.__is_active:
-            log.debug('Server already is stopped.')
+            log.debug(f'{self.__this}: Server already is stopped.')
             return
+        
+        self.__state : RaftState = RaftState.Follower
+        self.__leader: str | None = None
+        
+        self.__current_term : int = 0
+        self.__voted_for : str | None = None
+        self.__votes = 0
+        
+        self.__commit_index : int = 0
+        self.__last_applied : int = 0
+        
+        self.__next_index : dict[str, int] = {}
+        self.__match_index : dict[str, int] = {}
         
         self.__is_active = False
 
@@ -225,7 +238,7 @@ class RaftServer(QObject):
         self.updated.emit()
     
     def __reset_election_timer(self):
-        log.debug('__reset_election_timer: Reset')
+        log.debug(f'{self.__this}: __reset_election_timer: Reset')
         self.__election_timeout = 500 + random.randint(0, 200)
         self.__election_timer.start(self.__election_timeout)
     
@@ -241,6 +254,8 @@ class RaftServer(QObject):
         msg : ProtobufMessage = protocol.Message()
         msg.ParseFromString(data)
 
+        log.debug(f'{self.__this}: __process_main_socket: Message from {ip}:{port}')
+
         if msg.HasField('request_vote'):
             return self.__process_request_vote(ip, port, msg)
         if msg.HasField('request_vote_response'):
@@ -255,7 +270,8 @@ class RaftServer(QObject):
         host = QHostAddress(ip)
         port = port
         datagram = QNetworkDatagram(msg.SerializeToString(), host, port)
-        self.__main_socket.writeDatagram(datagram)
+        n = self.__main_socket.writeDatagram(datagram)
+        log.debug(f'{self.__this}: __send_raft_message: n = {n}, to {ip}:{port}')
     
     def __process_request_vote(self, ip: str, port: int, msg: protocol.Message):
         request = RaftRequestVoteRequest.from_protobuf(msg.request_vote)
@@ -263,7 +279,14 @@ class RaftServer(QObject):
         response = RaftRequestVoteResponse(self.__current_term, False)
         
         if self.__state == RaftState.Leader:
-            log.debug(f'__process_request_vote: I am Leader')
+            log.debug(f'{self.__this}: __process_request_vote: I am Leader')
+            msg = protocol.Message()
+            msg.request_vote_response.CopyFrom(response.to_protobuf())
+            return self.__send_raft_message(ip, port, msg)
+        
+        #  Reply false if term < currentTerm
+        if request.term < self.__current_term:
+            log.debug(f'{self.__this}: __process_request_vote: Request term less than current term')
             msg = protocol.Message()
             msg.request_vote_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
@@ -271,39 +294,34 @@ class RaftServer(QObject):
         # If RPC request or response contains term T > currentTerm: 
         # set currentTerm = T, convert to follower
         if request.term > self.__current_term:
-            log.debug(f'__process_request_vote: Become Follower')
+            log.debug(f'{self.__this}: __process_request_vote: Become Follower')
             self.__current_term = request.term
             self.__state = RaftState.Follower
             self.__voted_for = None
             self.__votes = 0
             self.__leader = None
             
+            response.term = self.__current_term
+            
             self.updated.emit()
-        
-        #  Reply false if term < currentTerm
-        if request.term < self.__current_term:
-            log.debug(f'__process_request_vote: Request term less than current term')
-            msg = protocol.Message()
-            msg.request_vote_response.CopyFrom(response.to_protobuf())
-            return self.__send_raft_message(ip, port, msg)
         
         # if already voted for self or another candidate
         if self.__voted_for is not None and self.__voted_for != request.candidateId:
-            log.debug(f'__process_request_vote: Is already voted for another candidate')
+            log.debug(f'{self.__this}: __process_request_vote: Is already voted for another candidate')
             msg = protocol.Message()
             msg.request_vote_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
         
         # if candidate’s log is not up-to-date
         if request.lastLogIndex < len(self.__log):
-            log.debug(f'__process_request_vote: Request is not up-to-date')
+            log.debug(f'{self.__this}: __process_request_vote: Request is not up-to-date')
             msg = protocol.Message()
             msg.request_vote_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
         
         # if candidate’s log is not up-to-date
         if self.__log and request.lastLogTerm < self.__log[-1].term:
-            log.debug(f'__process_request_vote: Request term < my last log item term')
+            log.debug(f'{self.__this}: __process_request_vote: Request term < my last log item term')
             msg = protocol.Message()
             msg.request_vote_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
@@ -313,7 +331,7 @@ class RaftServer(QObject):
         
         response.voteGranted = True
 
-        log.debug(f'__process_request_vote: Vote granted to {self.__voted_for}')
+        log.debug(f'{self.__this}: __process_request_vote: Vote granted to {self.__voted_for}')
         
         self.updated.emit()
         
@@ -325,7 +343,7 @@ class RaftServer(QObject):
         r = RaftRequestVoteResponse.from_protobuf(msg.request_vote_response)
         
         if r.term > self.__current_term:
-            log.debug('__process_request_vote_response: My term is outdated')
+            log.debug(f'{self.__this}: __process_request_vote_response: My term is outdated')
             self.__current_term = r.term
             self.__state = RaftState.Follower
             self.__voted_for = None
@@ -336,14 +354,15 @@ class RaftServer(QObject):
             return
         
         if r.term < self.__current_term:
-            log.debug('__process_request_vote_response: New election is already started')
+            log.debug(f'{self.__this}: __process_request_vote_response: New election is already started')
             return
         
         self.__votes += 1
 
         # If votes received from majority of servers: become leader
+        log.debug(f'{self.__this}: Votes: {self.__votes}')
         if self.__votes > len(self.__others) / 2:
-            log.debug('__process_request_vote_response: I try to become Leader')
+            log.debug(f'{self.__this}: __process_request_vote_response: I try to become Leader')
             self.__state = RaftState.Leader
             self.__leader = self.__this
             # for each server,
@@ -354,25 +373,26 @@ class RaftServer(QObject):
             self.__match_index = { node: 0 for node in self.__others }
             self.__heartbeat()
         else:
-            log.debug('__process_request_vote_response: I got too few votes, now I am Follower again')
-            self.__state = RaftState.Follower
-            self.__voted_for = None
-            self.__votes = 0
-            self.__leader = None
-            self.__reset_election_timer()
+            pass
         
         self.updated.emit()
     
     def __process_append_entries(self, ip: str, port: int, msg: protocol.Message):
-        log.debug(f'__process_append_entries: From {ip}:{port}')
+        log.debug(f'{self.__this}: __process_append_entries: From {ip}:{port}')
 
         request = RaftAppendEntriesRequest.from_protobuf(msg.append_entries)
 
         response = RaftAppendEntriesResponse(self.__current_term, False)
 
+        if self.__state == RaftState.Leader or self.__state == RaftState.Candidate:
+            log.debug(f'{self.__this}: __process_append_entries: I am not Follower')
+            msg = protocol.Message()
+            msg.append_entries_response.CopyFrom(response.to_protobuf())
+            return self.__send_raft_message(ip, port, msg)
+
         # Reply false if term < currentTerm
         if request.term < self.__current_term:
-            log.debug(f'__process_append_entries: Request term less than current term')
+            log.debug(f'{self.__this}: __process_append_entries: Request term less than current term')
             msg = protocol.Message()
             msg.append_entries_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
@@ -383,7 +403,7 @@ class RaftServer(QObject):
         # If RPC request or response contains term T > currentTerm: 
         # set currentTerm = T, convert to follower
         if request.term > self.__current_term:
-            log.debug('__process_append_entries: My term is outdated')
+            log.debug(f'{self.__this}: __process_append_entries: My term is outdated')
             self.__current_term = request.term
             self.__state = RaftState.Follower
             self.__voted_for = None
@@ -398,7 +418,7 @@ class RaftServer(QObject):
         # whose term matches prevLogTerm
         if request.prevLogIndex > 0:
             if len(self.__log) < request.prevLogIndex:
-                log.debug(f'__process_append_entries: my log last index < request prev log index')
+                log.debug(f'{self.__this}: __process_append_entries: my log last index < request prev log index')
                 msg = protocol.Message()
                 msg.append_entries_response.CopyFrom(response.to_protobuf())
                 return self.__send_raft_message(ip, port, msg)
@@ -406,7 +426,7 @@ class RaftServer(QObject):
             # its log with the same index and term, then it refuses the
             # new entries. 
             if self.__log[request.prevLogIndex - 1].term != request.prevLogTerm:
-                log.debug(f'__process_append_entries: my log prev term != request prev log term')
+                log.debug(f'{self.__this}: __process_append_entries: my log prev term != request prev log term')
                 msg = protocol.Message()
                 msg.append_entries_response.CopyFrom(response.to_protobuf())
                 return self.__send_raft_message(ip, port, msg)
@@ -432,7 +452,7 @@ class RaftServer(QObject):
 
         response.success = True
 
-        log.debug(f'__process_append_entries: Success')
+        log.debug(f'{self.__this}: __process_append_entries: Success')
 
         self.updated.emit()
 
@@ -446,15 +466,15 @@ class RaftServer(QObject):
     def __heartbeat(self):
         # Upon election: Send initial empty AppendEntries RPCs (heartbeat) to each server
         if not self.__state == RaftState.Leader:
-            log.debug('__heartbeat: I am not Leader')
+            log.debug(f'{self.__this}: __heartbeat: I am not Leader')
             return
         
-        log.debug('__heartbeat: Send heartbeats')
+        log.debug(f'{self.__this}: __heartbeat: Send heartbeats')
 
         for server in self.__others:
             self.__append_entries(server, is_heartbeat=True)
         
-        log.debug(f'__heartbeat: Heartbears are sent')
+        log.debug(f'{self.__this}: __heartbeat: Heartbears are sent')
         
         # Repeat during idle periods to prevent election timeouts
         self.__heartbeat_timer.start(self.__heartbeat_timeout)
@@ -463,14 +483,14 @@ class RaftServer(QObject):
         # If node has become Leader and election timer callback was called,
         # new election will not be started
         if self.__state == RaftState.Leader:
-            log.debug('__election: I am Leader')
+            log.debug(f'{self.__this}: __election: I am Leader')
             return
         
-        log.debug('__election: Started')
+        log.debug(f'{self.__this}: __election: Started')
         
         # On conversion to candidate, start election
         if self.__state == RaftState.Follower:
-            log.debug('__election: I was Follower, now I am Candidate')
+            log.debug(f'{self.__this}: __election: I was Follower, now I am Candidate')
             self.__state = RaftState.Candidate
         
         # Increment current term
@@ -481,7 +501,7 @@ class RaftServer(QObject):
         
         self.__reset_election_timer()
         
-        log.debug(f'__election: Term is {self.__current_term}')
+        log.debug(f'{self.__this}: __election: Term is {self.__current_term}')
         
         last_log_index = len(self.__log)
         last_log_term = self.__log[-1].term if self.__log else 0
@@ -500,7 +520,7 @@ class RaftServer(QObject):
             host, port = server.split(':')
             self.__send_raft_message(host, int(port), msg)
         
-        log.debug(f'__election: Requets are sent')
+        log.debug(f'{self.__this}: __election: Requets are sent')
 
         self.updated.emit()
     
@@ -508,10 +528,10 @@ class RaftServer(QObject):
         # Invoked by leader to replicate log entries
         # Also used as heartbeat
         if not self.__state == RaftState.Leader:
-            log.debug('__append_entries: I am not Leader')
+            log.debug(f'{self.__this}: __append_entries: I am not Leader')
             return
         
-        log.debug(f'__append_entries: Try for server {server}.')
+        log.debug(f'{self.__this}: __append_entries: Try for server {server}.')
         
         # When sending an AppendEntries RPC, the leader includes the index
         # and term of the entry in its log that immediately precedes
@@ -545,4 +565,60 @@ class RaftServer(QObject):
         host, port = server.split(':')
         self.__send_raft_message(host, int(port), msg)
 
-        log.debug(f'__append_entries: Sent to {server}.')
+        log.debug(f'{self.__this}: __append_entries: Sent to {server}.')
+    
+    @property
+    def is_configured(self):
+        return self.__is_configured
+    
+    @property
+    def is_active(self):
+        return self.__is_active
+    
+    @property
+    def state(self):
+        return self.__state
+    
+    @property
+    def this(self):
+        return self.__this
+    
+    @property
+    def leader(self):
+        return self.__leader
+    
+    @property
+    def current_term(self):
+        return self.__current_term
+    
+    @property
+    def voted_for(self):
+        return self.__voted_for
+    
+    @property
+    def votes(self):
+        return self.__votes
+    
+    @property
+    def commit_index(self):
+        return self.__commit_index
+    
+    @property
+    def last_applied(self):
+        return self.__last_applied
+    
+    @property
+    def next_index(self):
+        return self.__next_index
+    
+    @property
+    def match_index(self):
+        return self.__match_index
+    
+    @property
+    def heartbeat_timeout(self):
+        return self.__heartbeat_timeout
+    
+    @property
+    def election_timeout(self):
+        return self.__election_timeout

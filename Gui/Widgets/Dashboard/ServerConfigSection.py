@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QTableWidgetItem
 from PyQt5.QtCore import Qt
 
 from Gui.Widgets.Table import Table
+from Gui.Widgets.Dashboard.StartStopServer import StartStopServer
 
 from Gui.Themes import CurrentTheme as Theme
 
@@ -34,12 +35,19 @@ class ServerConfigSection(QWidget):
         ''')
 
         self._servers = Table()
+        self._servers.cellDoubleClicked.connect(self._on_servers_double_clicked)
+
+        self._start_stop_server = StartStopServer(self)
+        self._start_stop_server.clicked.connect(self._on_start_stop_server_clicked)
+        self._start_stop_server.setText('Non-configured')
+        self._start_stop_server.setDisabled(True)
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
 
         self._layout.addWidget(self._servers)
+        self._layout.addWidget(self._start_stop_server, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.setLayout(self._layout)
         self.updateUI()
@@ -75,3 +83,22 @@ class ServerConfigSection(QWidget):
         self._servers.setVisible(False)
         self._servers.resizeColumnsToContents()
         self._servers.setVisible(True)
+    
+    def _on_servers_double_clicked(self, row, col):
+        host = self._servers.item(row, 1).text()
+        port = self._servers.item(row, 2).text()
+
+        this = f'{host}:{port}'
+        others = [x for x in RAFT_SERVERS if x != this]
+        app.server.config(this, others)
+
+        self._start_stop_server.setDisabled(False)
+        self._start_stop_server.setText('Start')
+    
+    def _on_start_stop_server_clicked(self):
+        if app.server.is_active:
+            app.server.stop()
+            self._start_stop_server.setText('Start')
+        else:
+            app.server.start()
+            self._start_stop_server.setText('Stop')

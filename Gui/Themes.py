@@ -18,17 +18,23 @@ class Theme:
 
     TableFont       = Fonts.FONT_JET_BRAINS_MONO_NL_REGULAR
     TableFontWeight = Fonts.Font.Regular
-    TableFontSize   = 11
+    TableFontSize   = 10
     
     TableHeaderFont       = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
     TableHeaderFontWeight = Fonts.Font.Light
-    TableHeaderFontSize   = 10
+    TableHeaderFontSize   = 9
 
     DashboardScreenBackgroundColor = Colors.COLOR_VSC_PRIMARY
     DashboardServerConfigSectionBackgroundColor = Colors.COLOR_VSC_PRIMARY
     DashboardServerLogSectionBackgroundColor = Colors.COLOR_VSC_PRIMARY
     DashboardServerStateSectionBackgroundColor = Colors.COLOR_VSC_PRIMARY
     DashboardServerStateSectionBorderColor = Colors.COLOR_VSC_TERTIARY
+
+    DashboardStartStopServerBackgroundColor = Colors.COLOR_VSC_TERTIARY
+    DashboardStartStopServerColor = Colors.COLOR_VSC_LIGHT
+    DashboardStartStopServerFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    DashboardStartStopServerFontWeight = Fonts.Font.Light
+    DashboardStartStopServerFontSize   = 10
 
 
 class DefaultTheme(Theme):

@@ -16,9 +16,9 @@ LOG_FILE = env.get('LOG_FILE', None)
 LOG_FMT = env.get('LOG_FMT', '%(asctime)s %(message)s')
 
 RAFT_SERVERS = [
-    'localhost:9001',
-    'localhost:9002',
-    'localhost:9003', 
-    'localhost:9004',
-    'localhost:9005'
+    '127.0.0.1:9001',
+    '127.0.0.1:9002',
+    '127.0.0.1:9003', 
+    '127.0.0.1:9004',
+    '127.0.0.1:9005'
 ]

@@ -47,11 +47,43 @@ class ServerStateSection(QWidget):
         self._vars.clear()
 
         table_cols = ['#', 'Var', 'Value']
-        table_rows = []
+        
+        if app.server.is_configured:
+            table_rows = [
+                ['is_configured', str(app.server.is_configured)],
+                ['is_active', str(app.server.is_active)],
+                ['state', str(app.server.state.name)],
+                ['this', str(app.server.this)],
+                ['leader', str(app.server.leader)],
+                ['current_term', str(app.server.current_term)],
+                ['voted_for', str(app.server.voted_for)],
+                ['votes', str(app.server.votes)],
+                ['commit_index', str(app.server.commit_index)],
+                ['last_applied', str(app.server.last_applied)],
+                ['next_index', str(list(app.server.next_index.values()))],
+                ['match_index', str(list(app.server.match_index.values()))],
+                ['heartbeat_timeout', str(app.server.heartbeat_timeout)],
+                ['election_timeout', str(app.server.election_timeout)]
+            ]
+        else:
+            table_rows = []
         
         self._vars.setRowCount(len(table_rows))
         self._vars.setColumnCount(len(table_cols))
         self._vars.setHorizontalHeaderLabels(table_cols)
+
+        for i, item in enumerate(table_rows, 1):
+            item_0 = QTableWidgetItem(str(i))
+            item_1 = QTableWidgetItem(item[0])
+            item_2 = QTableWidgetItem(item[1])
+
+            item_0.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_1.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_2.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self._vars.setItem(i - 1, 0, item_0)
+            self._vars.setItem(i - 1, 1, item_1)
+            self._vars.setItem(i - 1, 2, item_2)
 
         self._vars.setVisible(False)
         self._vars.resizeColumnsToContents()
