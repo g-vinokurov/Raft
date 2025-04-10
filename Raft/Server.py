@@ -384,8 +384,8 @@ class RaftServer(QObject):
 
         response = RaftAppendEntriesResponse(self.__current_term, False)
 
-        if self.__state == RaftState.Leader or self.__state == RaftState.Candidate:
-            log.debug(f'{self.__this}: __process_append_entries: I am not Follower')
+        if self.__state == RaftState.Leader:
+            log.debug(f'{self.__this}: __process_append_entries: I am Leader')
             msg = protocol.Message()
             msg.append_entries_response.CopyFrom(response.to_protobuf())
             return self.__send_raft_message(ip, port, msg)
@@ -408,7 +408,15 @@ class RaftServer(QObject):
             self.__state = RaftState.Follower
             self.__voted_for = None
             self.__votes = 0
-            self.__leader = None
+        
+        # If AppendEntries RPC received from new leader:
+        # convert to follower
+        if self.__state == RaftState.Candidate:
+            log.debug(f'{self.__this}: __process_append_entries: I am Candidate, I become Follower')
+            self.__current_term = request.term
+            self.__state = RaftState.Follower
+            self.__voted_for = None
+            self.__votes = 0
         
         self.__leader = request.leaderId
 
