@@ -38,6 +38,34 @@ class Theme:
 
     ClientScreenBackgroundColor = Colors.COLOR_WHITE
 
+    ClientDeleteFromStorageBackgroundColor = Colors.COLOR_BS_DANDER
+    ClientDeleteFromStorageColor = Colors.COLOR_WHITE
+    ClientDeleteFromStorageFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    ClientDeleteFromStorageFontWeight = Fonts.Font.Light
+    ClientDeleteFromStorageFontSize   = 10
+
+    ClientGetFromStorageBackgroundColor = Colors.COLOR_BS_INFO
+    ClientGetFromStorageColor = Colors.COLOR_WHITE
+    ClientGetFromStorageFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    ClientGetFromStorageFontWeight = Fonts.Font.Light
+    ClientGetFromStorageFontSize   = 10
+
+    ClientPutToStorageBackgroundColor = Colors.COLOR_BS_SUCCESS
+    ClientPutToStorageColor = Colors.COLOR_WHITE
+    ClientPutToStorageFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    ClientPutToStorageFontWeight = Fonts.Font.Light
+    ClientPutToStorageFontSize   = 10
+    
+    ClientKeyValueArgsBorderColor = Colors.COLOR_BS_DARK
+    ClientKeyValueArgsColor = Colors.COLOR_BS_DARK
+    ClientKeyValueArgsFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    ClientKeyValueArgsFontWeight = Fonts.Font.Light
+    ClientKeyValueArgsFontSize   = 10
+    
+    ClientResponseTextColor = Colors.COLOR_BS_DARK
+    ClientResponseTextFont = Fonts.FONT_JET_BRAINS_MONO_NL_LIGHT
+    ClientResponseTextFontWeight = Fonts.Font.Light
+    ClientResponseTextFontSize   = 10
 
 class DefaultTheme(Theme):
     pass

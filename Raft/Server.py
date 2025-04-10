@@ -245,6 +245,7 @@ class RaftServer(QObject):
         self.updated.emit()
     
     def client_request_handler(self, request: str, client: QTcpSocket):
+        log.debug(request)
         return 200, 'OK', 'Meow'
     
     def __reset_election_timer(self):
