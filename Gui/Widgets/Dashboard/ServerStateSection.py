@@ -50,7 +50,6 @@ class ServerStateSection(QWidget):
         
         if app.server.is_configured:
             table_rows = [
-                ['is_configured', str(app.server.is_configured)],
                 ['is_active', str(app.server.is_active)],
                 ['state', str(app.server.state.name)],
                 ['this', str(app.server.this)],
@@ -62,11 +61,17 @@ class ServerStateSection(QWidget):
                 ['last_applied', str(app.server.last_applied)],
                 ['next_index', str(list(app.server.next_index.values()))],
                 ['match_index', str(list(app.server.match_index.values()))],
-                ['heartbeat_timeout', str(app.server.heartbeat_timeout)],
-                ['election_timeout', str(app.server.election_timeout)]
+                ['election_timeout', str(app.server.election_timeout)],
             ]
         else:
             table_rows = []
+        
+        if app.rest_api.is_configured:
+            table_rows += [
+                ['api_host', str(app.rest_api.host)],
+                ['api_port', str(app.rest_api.port)],
+                ['api_is_active', str(app.rest_api.is_active)],
+            ]
         
         self._vars.setRowCount(len(table_rows))
         self._vars.setColumnCount(len(table_cols))

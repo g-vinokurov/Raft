@@ -25,7 +25,7 @@ class Table(QTableWidget):
 
             QTableWidget::item {{
                 color: {Theme.TableItemColor};
-                padding: 20px;
+                padding: 10px;
             }}
 
             QTableWidget::item:selected {{

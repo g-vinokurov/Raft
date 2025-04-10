@@ -48,8 +48,14 @@ class DashboardScreen(Screen):
         
         app.gui.setWindowTitle('Dashboard')
         app.server.updated.connect(self._on_server_updated)
+        app.rest_api.updated.connect(self._on_rest_api_updated)
     
     def _on_server_updated(self):
+        self._server_config_section.updateUI()
+        self._server_state_section.updateUI()
+        self._server_log_section.updateUI()
+    
+    def _on_rest_api_updated(self):
         self._server_config_section.updateUI()
         self._server_state_section.updateUI()
         self._server_log_section.updateUI()

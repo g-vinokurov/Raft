@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QApplication
 from Gui.Widgets.Window import Window
 from State.State import State
 from Raft.Server import RaftServer
+from RestAPI.Server import HttpServer
 
 
 class App(QApplication):
@@ -11,7 +12,8 @@ class App(QApplication):
         super().__init__(*args, **kwargs)
         
         self._state = State()
-        self._server = RaftServer(self._state)
+        self._raft_server = RaftServer(self._state)
+        self._rest_api = HttpServer()
         self._gui = Window()
     
     @property
@@ -24,7 +26,11 @@ class App(QApplication):
     
     @property
     def server(self):
-        return self._server
+        return self._raft_server
+    
+    @property
+    def rest_api(self):
+        return self._rest_api
 
 
 app = App([])

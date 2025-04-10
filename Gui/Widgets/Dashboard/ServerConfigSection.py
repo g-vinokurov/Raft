@@ -11,6 +11,7 @@ from Gui.Widgets.Dashboard.StartStopServer import StartStopServer
 from Gui.Themes import CurrentTheme as Theme
 
 from Config import RAFT_SERVERS
+from Config import REST_API_SERVERS
 
 from Log import log
 from App import app
@@ -37,18 +38,30 @@ class ServerConfigSection(QWidget):
         self._servers = Table()
         self._servers.cellDoubleClicked.connect(self._on_servers_double_clicked)
 
-        self._start_stop_server = StartStopServer(self)
-        self._start_stop_server.clicked.connect(self._on_start_stop_server_clicked)
-        self._start_stop_server.setText('Non-configured')
-        self._start_stop_server.setDisabled(True)
+        self._start_stop_raft_server = StartStopServer(self)
+        self._start_stop_raft_server.clicked.connect(self._on_start_stop_raft_server_clicked)
+        self._start_stop_raft_server.setText('Raft: Non-configured')
+        self._start_stop_raft_server.setDisabled(True)
+        
+        self._start_stop_raft_server = StartStopServer(self)
+        self._start_stop_raft_server.clicked.connect(self._on_start_stop_raft_server_clicked)
+        self._start_stop_raft_server.setText('Raft: Non-configured')
+        self._start_stop_raft_server.setDisabled(True)
+
+        self._start_stop_rest_api_server = StartStopServer(self)
+        self._start_stop_rest_api_server.clicked.connect(self._on_start_stop_rest_api_server_clicked)
+        self._start_stop_rest_api_server.setText('Http: Non-configured')
+        self._start_stop_rest_api_server.setDisabled(True)
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
+        self._layout.setSpacing(32)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._layout.addWidget(self._servers)
-        self._layout.addWidget(self._start_stop_server, alignment=Qt.AlignmentFlag.AlignHCenter)
-
+        self._layout.addWidget(self._start_stop_raft_server, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._layout.addWidget(self._start_stop_rest_api_server, alignment=Qt.AlignmentFlag.AlignHCenter)
+        
         self.setLayout(self._layout)
         self.updateUI()
     
@@ -92,13 +105,30 @@ class ServerConfigSection(QWidget):
         others = [x for x in RAFT_SERVERS if x != this]
         app.server.config(this, others)
 
-        self._start_stop_server.setDisabled(False)
-        self._start_stop_server.setText('Start')
+        host, port = str(REST_API_SERVERS[row]).split(':')
+        host = str(host)
+        port = int(port)
+
+        app.rest_api.config(host, port)
+        
+        self._start_stop_raft_server.setDisabled(False)
+        self._start_stop_raft_server.setText('Raft: Start')
+
+        self._start_stop_rest_api_server.setDisabled(False)
+        self._start_stop_rest_api_server.setText('Http: Start')
     
-    def _on_start_stop_server_clicked(self):
+    def _on_start_stop_raft_server_clicked(self):
         if app.server.is_active:
             app.server.stop()
-            self._start_stop_server.setText('Start')
+            self._start_stop_raft_server.setText('Raft: Start')
         else:
             app.server.start()
-            self._start_stop_server.setText('Stop')
+            self._start_stop_raft_server.setText('Raft: Stop')
+    
+    def _on_start_stop_rest_api_server_clicked(self):
+        if app.rest_api.is_active:
+            app.rest_api.stop()
+            self._start_stop_rest_api_server.setText('Http: Start')
+        else:
+            app.rest_api.start()
+            self._start_stop_rest_api_server.setText('Http: Stop')
