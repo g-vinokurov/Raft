@@ -78,7 +78,7 @@ class HttpServer(QObject):
         if data:
             request = data.decode('utf-8')
             
-            if request.startswith('GET'):
+            if request.startswith('GET') or request.startswith('PUT') or request.startswith('DELETE'):
                 self.__handle_request(client, request)
             else:
                 self.__send_response(client, 501, 'Not Implemented', 'Unsupported method')
@@ -89,8 +89,6 @@ class HttpServer(QObject):
         client.deleteLater()
 
     def __handle_request(self, client: QTcpSocket, request : str):
-        path = request.split(' ')[1]
-        
         # if path == '/':
         #     response_content = '<h1>Welcome to PyQt5 HTTP Server</h1><p>This is a basic HTTP server implementation.</p>'
         #     self.__send_response(client, 200, 'OK', response_content)

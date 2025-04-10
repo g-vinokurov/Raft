@@ -2,6 +2,7 @@
 import sys
 import enum
 import random
+import json
 
 from google.protobuf.message import Message as ProtobufMessage
 
@@ -17,6 +18,9 @@ from PyQt5.QtCore import pyqtSignal
 from State.State import State as FSM
 
 import Proto.raft_pb2 as protocol
+
+from Config import RAFT_SERVERS
+from Config import REST_API_SERVERS
 
 from Log import log
 
@@ -245,8 +249,43 @@ class RaftServer(QObject):
         self.updated.emit()
     
     def client_request_handler(self, request: str, client: QTcpSocket):
-        log.debug(request)
-        return 200, 'OK', 'Meow'
+        log.debug(f'\n{request}')
+
+        method = request.split()[0]
+        path = request.split()[1]
+        
+        if not self.__is_configured:
+            return 500, 'Internal Server Error', 'Raft Server is not configured'
+        
+        if not self.__is_active:
+            return 500, 'Internal Server Error', 'Raft Server is not active'
+        
+        if self.__state != RaftState.Leader:
+            if self.__leader is None:
+                return 404, 'Not Found', 'Leader not found'
+            
+            leader_index = RAFT_SERVERS.index(self.__leader)
+            leader_api = REST_API_SERVERS[leader_index]
+            return 302, 'Redirect', f'Send request to Leader at {leader_api}'
+    
+        if method == 'GET' and path == '/get':
+
+            # r = request[request.find('Connection: close\n\n')+19:].strip()
+            # r : dict = json.loads(r)
+            # cmd = str({'action': 'get', 'args': r})
+            return 200, 'Ok', f'{request}'
+        
+        if method == 'PUT' and path == '/put':
+            # cmd = str({'action': 'put', 'args': r})
+            return 200, 'Ok', f'{request}'
+        
+        if method == 'DELETE' and path == '/delete':
+            # r = request[request.find('Connection: close\n\n')+19:].strip()
+            # r : dict = json.loads(r)
+            # cmd = str({'action': 'delete', 'args': r})
+            return 200, 'Ok', f'{request}'
+        
+        return 400, 'Bad request', ''
     
     def __reset_election_timer(self):
         log.debug(f'{self.__this}: __reset_election_timer: Reset')
