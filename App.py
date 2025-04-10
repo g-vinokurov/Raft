@@ -14,6 +14,7 @@ class App(QApplication):
         self._state = State()
         self._raft_server = RaftServer(self._state)
         self._rest_api = HttpServer()
+        self._rest_api.set_handler(self._raft_server.client_request_handler)
         self._gui = Window()
     
     @property

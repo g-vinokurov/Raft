@@ -36,6 +36,8 @@ class Theme:
     DashboardStartStopServerFontWeight = Fonts.Font.Light
     DashboardStartStopServerFontSize   = 10
 
+    ClientScreenBackgroundColor = Colors.COLOR_WHITE
+
 
 class DefaultTheme(Theme):
     pass

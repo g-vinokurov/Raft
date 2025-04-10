@@ -6,6 +6,7 @@ import random
 from google.protobuf.message import Message as ProtobufMessage
 
 from PyQt5.QtNetwork import QUdpSocket
+from PyQt5.QtNetwork import QTcpSocket
 from PyQt5.QtNetwork import QHostAddress
 from PyQt5.QtNetwork import QNetworkDatagram
 
@@ -242,6 +243,9 @@ class RaftServer(QObject):
         self.__main_socket = None
 
         self.updated.emit()
+    
+    def client_request_handler(self, request: str, client: QTcpSocket):
+        return 200, 'OK', 'Meow'
     
     def __reset_election_timer(self):
         log.debug(f'{self.__this}: __reset_election_timer: Reset')
@@ -705,3 +709,7 @@ class RaftServer(QObject):
     @property
     def election_timeout(self):
         return self.__election_timeout
+    
+    @property
+    def log(self):
+        return self.__log[::]

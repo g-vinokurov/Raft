@@ -48,9 +48,29 @@ class ServerLogSection(QWidget):
         table_cols = ['#', 'Cmd', 'Term']
         table_rows = []
         
+        if app.server.is_configured:
+            for entry in app.server.log:
+                item = {}
+                item['cmd'] = entry.cmd
+                item['term'] = entry.term
+                table_rows.append(item)
+        
         self._log.setRowCount(len(table_rows))
         self._log.setColumnCount(len(table_cols))
         self._log.setHorizontalHeaderLabels(table_cols)
+
+        for i, item in enumerate(table_rows, 1):
+            item_0 = QTableWidgetItem(str(i))
+            item_1 = QTableWidgetItem(item['cmd'])
+            item_2 = QTableWidgetItem(item['term'])
+
+            item_0.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_1.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_2.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self._log.setItem(i - 1, 0, item_0)
+            self._log.setItem(i - 1, 1, item_1)
+            self._log.setItem(i - 1, 2, item_2)
 
         self._log.setVisible(False)
         self._log.resizeColumnsToContents()

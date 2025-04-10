@@ -16,6 +16,7 @@ class HttpServer(QObject):
         super().__init__()
         self.__is_configured = False
         self.__is_active = False
+        self.__handler = lambda request, client : 200, 'OK', ''
     
     def config(self, host: str, port: int):
         if self.__is_active:
@@ -43,7 +44,24 @@ class HttpServer(QObject):
             return
         
         log.info(f'Rest API Server started on host {self.__host} on port {self.__port}')
+
         self.__is_active = True
+
+        self.updated.emit()
+    
+    def stop(self):
+        self.__server.close()
+        for client in self.__clients:
+            client.disconnectFromHost()
+        
+        self.__is_active = False
+        
+        log.info('RestAPI Server stopped')
+
+        self.updated.emit()
+    
+    def set_handler(self, handler):
+        self.__handler = handler
 
     def __handle_new_connection(self):
         client = self.__server.nextPendingConnection()
@@ -61,7 +79,7 @@ class HttpServer(QObject):
             request = data.decode('utf-8')
             
             if request.startswith('GET'):
-                self.__handle_get_request(client, request)
+                self.__handle_request(client, request)
             else:
                 self.__send_response(client, 501, 'Not Implemented', 'Unsupported method')
 
@@ -70,17 +88,20 @@ class HttpServer(QObject):
             self.__clients.remove(client)
         client.deleteLater()
 
-    def __handle_get_request(self, client: QTcpSocket, request : str):
+    def __handle_request(self, client: QTcpSocket, request : str):
         path = request.split(' ')[1]
         
-        if path == '/':
-            response_content = '<h1>Welcome to PyQt5 HTTP Server</h1><p>This is a basic HTTP server implementation.</p>'
-            self.__send_response(client, 200, 'OK', response_content)
-        elif path == '/hello':
-            response_content = '<h1>Hello World!</h1>'
-            self.__send_response(client, 200, 'OK', response_content)
-        else:
-            self.__send_response(client, 404, 'Not Found', '<h1>404 Not Found</h1>')
+        # if path == '/':
+        #     response_content = '<h1>Welcome to PyQt5 HTTP Server</h1><p>This is a basic HTTP server implementation.</p>'
+        #     self.__send_response(client, 200, 'OK', response_content)
+        # elif path == '/hello':
+        #     response_content = '<h1>Hello World!</h1>'
+        #     self.__send_response(client, 200, 'OK', response_content)
+        # else:
+        #     self.__send_response(client, 404, 'Not Found', '<h1>404 Not Found</h1>')
+        status, status_text, response = self.__handler(request, client)
+        
+        self.__send_response(client, status, status_text, response)
 
     def __send_response(self, client : QTcpSocket, status_code : int, status_text : str, content : str):
         response = QByteArray()
@@ -93,12 +114,6 @@ class HttpServer(QObject):
         
         client.write(response)
         client.disconnectFromHost()
-
-    def stop(self):
-        self.__server.close()
-        for client in self.__clients:
-            client.disconnectFromHost()
-        log.info('RestAPI Server stopped')
     
     @property
     def is_configured(self):
