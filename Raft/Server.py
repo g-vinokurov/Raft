@@ -445,13 +445,7 @@ class RaftServer(QObject):
 
         request = RaftAppendEntriesRequest.from_protobuf(msg.append_entries)
 
-        response = RaftAppendEntriesResponse(self.__current_term, False, len(self.__log))
-
-        if self.__state == RaftState.Leader:
-            log.debug(f'{self.__this}: __process_append_entries: I am Leader')
-            msg = protocol.Message()
-            msg.append_entries_response.CopyFrom(response.to_protobuf())
-            return self.__send_raft_message(ip, port, msg)
+        response = RaftAppendEntriesResponse(self.__current_term, False, len(self.__log) + 1)
 
         # Reply false if term < currentTerm
         if request.term < self.__current_term:
@@ -471,6 +465,12 @@ class RaftServer(QObject):
             self.__state = RaftState.Follower
             self.__voted_for = None
             self.__votes = 0
+        
+        if self.__state == RaftState.Leader:
+            log.debug(f'{self.__this}: __process_append_entries: I am Leader')
+            msg = protocol.Message()
+            msg.append_entries_response.CopyFrom(response.to_protobuf())
+            return self.__send_raft_message(ip, port, msg)
         
         # If AppendEntries RPC received from new leader:
         # convert to follower
@@ -513,7 +513,7 @@ class RaftServer(QObject):
                 self.__log = self.__log[:request.prevLogIndex - 1] + request.entries[::]
             else:
                 self.__log = request.entries[::]
-        response.lastLogIndex = len(self.__log)
+        response.lastLogIndex = len(self.__log) + 1
         
         # Update commit index if leaderCommit > commitIndex
         if request.leaderCommit > self.__commit_index:
@@ -561,13 +561,15 @@ class RaftServer(QObject):
             self.__match_index[server] = self.__next_index[server] - 1
             
             # If there exists an N such that N > commitIndex, a majority
-            # of matchIndex[i] ≥ N, and log[N].term == currentTerm:
+            # of matchIndex[i] >= N, and log[N].term == currentTerm:
             # set commitIndex = N 
             # ...
             match_indexes = list(self.__match_index.values())
             n = max(set(match_indexes), key=match_indexes.count)
             if n > self.__commit_index and self.__log[n - 1].term == self.__current_term:
                 self.__commit_index = n
+
+            self.updated.emit()
             return
         
         # After a rejection, the leader decrements nextIndex and retries
@@ -576,6 +578,7 @@ class RaftServer(QObject):
         # When nextIndex will reach a point where the leader and follower logs match,
         # AppendEntries will succeed, which removes any conflicting entries 
         # in the follower’s log and appends entries from the leader’s log (if any).
+        self.updated.emit()
         return
 
 
