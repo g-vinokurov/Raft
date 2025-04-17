@@ -6,6 +6,10 @@ from State.State import State
 from Raft.Server import RaftServer
 from RestAPI.Server import HttpServer
 
+from Exceptions import Handler
+
+Handler.connect()
+
 
 class App(QApplication):
     def __init__(self, *args, **kwargs):
