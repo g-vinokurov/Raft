@@ -45,14 +45,14 @@ class ServerLogSection(QWidget):
     def updateUI(self):
         self._log.clear()
 
-        table_cols = ['#', 'Cmd', 'Term']
+        table_cols = ['#', 'Term', 'Cmd']
         table_rows = []
         
         if app.server.is_configured:
             for entry in app.server.log:
                 item = {}
+                item['term'] = str(entry.term)
                 item['cmd'] = entry.cmd
-                item['term'] = entry.term
                 table_rows.append(item)
         
         self._log.setRowCount(len(table_rows))
@@ -61,9 +61,9 @@ class ServerLogSection(QWidget):
 
         for i, item in enumerate(table_rows, 1):
             item_0 = QTableWidgetItem(str(i))
-            item_1 = QTableWidgetItem(item['cmd'])
-            item_2 = QTableWidgetItem(item['term'])
-
+            item_1 = QTableWidgetItem(item['term'])
+            item_2 = QTableWidgetItem(item['cmd'])
+            
             item_0.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_1.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             item_2.setTextAlignment(Qt.AlignmentFlag.AlignCenter)

@@ -49,6 +49,9 @@ class RaftLogEntry:
         term = msg.term
         cmd = msg.cmd
         return cls(cmd, term)
+    
+    def __str__(self):
+        return json.dumps({'cmd': self._cmd, 'term': self._term})
 
 
 class RaftRequestVoteRequest:
@@ -498,16 +501,10 @@ class RaftServer(QObject):
             self.__voted_for = None
             self.__votes = 0
         
-        if self.__state == RaftState.Leader:
-            log.debug(f'{self.__this}: __process_append_entries: I am Leader')
-            msg = protocol.Message()
-            msg.append_entries_response.CopyFrom(response.to_protobuf())
-            return self.__send_raft_message(ip, port, msg)
-        
         # If AppendEntries RPC received from new leader:
         # convert to follower
-        if self.__state == RaftState.Candidate:
-            log.debug(f'{self.__this}: __process_append_entries: I am Candidate, I become Follower')
+        if self.__state == RaftState.Candidate or self.__state == RaftState.Leader:
+            log.debug(f'{self.__this}: __process_append_entries: I am Candidate or Leader, I become Follower')
             self.__current_term = request.term
             self.__state = RaftState.Follower
             self.__voted_for = None
@@ -544,9 +541,11 @@ class RaftServer(QObject):
             log.debug(f'{self.__this}: __process_append_entries: Request Entries = {len(request.entries)}')
             if request.prevLogIndex > 0:
                 log.debug(f'{self.__this}: __process_append_entries: Request PrevLogIndex = {request.prevLogIndex}')
-                self.__log = self.__log[:request.prevLogIndex - 1] + request.entries[::]
+                self.__log = self.__log[:request.prevLogIndex] + request.entries[::]
             else:
                 self.__log = request.entries[::]
+        
+        log.debug(f'{self.__this}: __process_append_entries: Log = {[str(x) for x in self.__log]}')
         response.lastLogIndex = len(self.__log) + 1
         
         # Update commit index if leaderCommit > commitIndex
@@ -605,6 +604,10 @@ class RaftServer(QObject):
                 self.__commit_index = n
 
             log.debug(f'{self.__this}: __process_append_entries_response: Success = {r.lastLogIndex}')
+
+            if self.__commit_index > self.__last_applied:
+                self.__apply(self.__last_applied + 1, self.__commit_index)
+                self.__last_applied = self.__commit_index
 
             self.updated.emit()
             return
@@ -697,12 +700,16 @@ class RaftServer(QObject):
         next_log_index = self.__next_index.get(server, 1)
         prev_log_index = next_log_index - 1
         prev_log_term = self.__log[prev_log_index - 1].term if self.__log else 0
+
+        log.debug(f'{self.__this}: __append_entries: NLI = {next_log_index}, PLI = {prev_log_index}.')
         
         # log entries to store (may send more than one for efficiency)
         if next_log_index <= len(self.__log):
             entries = self.__log[next_log_index - 1:]
         else:
             entries = []
+
+        log.debug(f'{self.__this}: __append_entries: ES = {entries[-1].cmd if entries else None}.')
         
         # empty for heartbeat
         if is_heartbeat:
