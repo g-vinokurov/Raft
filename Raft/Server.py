@@ -600,7 +600,8 @@ class RaftServer(QObject):
             # ...
             match_indexes = list(self.__match_index.values())
             n = max(set(match_indexes), key=match_indexes.count)
-            if n > self.__commit_index and self.__log[n - 1].term == self.__current_term:
+            
+            if n > self.__commit_index and n <= len(self.__log) and self.__log[n - 1].term == self.__current_term:
                 self.__commit_index = n
 
             log.debug(f'{self.__this}: __process_append_entries_response: Success = {r.lastLogIndex}')
