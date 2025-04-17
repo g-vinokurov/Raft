@@ -255,47 +255,79 @@ class RaftServer(QObject):
         path = request.split()[1]
         
         if not self.__is_configured:
-            return 500, 'Internal Server Error', 'Raft Server is not configured'
+            msg = {'msg': 'Raft Server is not configured'}
+            msg = json.dumps(msg)
+            return 500, 'Internal Server Error', msg
         
         if not self.__is_active:
-            return 500, 'Internal Server Error', 'Raft Server is not active'
+            msg = {'msg': 'Raft Server is not active'}
+            msg = json.dumps(msg)
+            return 500, 'Internal Server Error', msg
         
         if self.__state != RaftState.Leader:
             if self.__leader is None:
-                return 404, 'Not Found', 'Leader not found'
+                msg = {'msg': 'Leader not found'}
+                msg = json.dumps(msg)
+                return 404, 'Not Found', msg
             
             leader_index = RAFT_SERVERS.index(self.__leader)
             leader_api = REST_API_SERVERS[leader_index]
-            return 302, 'Redirect', f'Send request to Leader at {leader_api}'
+
+            msg = {'msg': f'Send request to Leader at {leader_api}'}
+            msg = json.dumps(msg)
+            return 302, 'Redirect', msg
     
         if method == 'GET' and path == '/get':
             r = request.split('\n\n')
             if len(r) < 2:
-                return 400, 'Bad request', 'Request body is empty'
+                msg = {'msg': 'Request body is empty'}
+                msg = json.dumps(msg)
+                return 400, 'Bad request', msg
+            
             r = r[1]
             r = json.loads(r)
-            cmd = {'action': 'put', 'args': r}
-            cmd = json.dumps(cmd)
-            return 200, 'Ok', cmd
+            if not isinstance(r, dict):
+                msg = {'msg': 'Request body must contain onject'}
+                msg = json.dumps(msg)
+                return 400, 'Bad request', msg
+            
+            key = r.get('key', 'no-key')
+            val = self.__fsm.get(key)
+            if val is None:
+                msg = {'msg': f'Key {key} not found'}
+                msg = json.dumps(msg)
+                return 404, 'Not found', msg
+            
+            response = {'value': val}
+            response = json.dumps(response)
+            return 200, 'Ok', response
         
         if method == 'PUT' and path == '/put':
             r = request.split('\n\n')
             if len(r) < 2:
-                return 400, 'Bad request', 'Request body is empty'
+                msg = {'msg': 'Request body is empty'}
+                msg = json.dumps(msg)
+                return 400, 'Bad request', msg
+            
             r = r[1]
             r = json.loads(r)
             cmd = {'action': 'put', 'args': r}
             cmd = json.dumps(cmd)
+            self.__add_cmd_to_log(cmd)
             return 200, 'Ok', cmd
         
         if method == 'DELETE' and path == '/delete':
             r = request.split('\n\n')
             if len(r) < 2:
-                return 400, 'Bad request', 'Request body is empty'
+                msg = {'msg': 'Request body is empty'}
+                msg = json.dumps(msg)
+                return 400, 'Bad request', msg
+            
             r = r[1]
             r = json.loads(r)
-            cmd = {'action': 'put', 'args': r}
+            cmd = {'action': 'delete', 'args': r}
             cmd = json.dumps(cmd)
+            self.__add_cmd_to_log(cmd)
             return 200, 'Ok', cmd
         
         return 400, 'Bad request', ''
@@ -509,7 +541,9 @@ class RaftServer(QObject):
         # that point, and send the follower all of the leader’s entries
         # after that point.
         if request.entries:
+            log.debug(f'{self.__this}: __process_append_entries: Request Entries = {len(request.entries)}')
             if request.prevLogIndex > 0:
+                log.debug(f'{self.__this}: __process_append_entries: Request PrevLogIndex = {request.prevLogIndex}')
                 self.__log = self.__log[:request.prevLogIndex - 1] + request.entries[::]
             else:
                 self.__log = request.entries[::]
@@ -517,6 +551,7 @@ class RaftServer(QObject):
         
         # Update commit index if leaderCommit > commitIndex
         if request.leaderCommit > self.__commit_index:
+            log.debug(f'{self.__this}: __process_append_entries: Request Leader Commit = {request.prevLogIndex}')
             self.__commit_index = min(request.leaderCommit, len(self.__log))
         
         # If commitIndex > lastApplied: increment lastApplied, apply
@@ -569,6 +604,8 @@ class RaftServer(QObject):
             if n > self.__commit_index and self.__log[n - 1].term == self.__current_term:
                 self.__commit_index = n
 
+            log.debug(f'{self.__this}: __process_append_entries_response: Success = {r.lastLogIndex}')
+
             self.updated.emit()
             return
         
@@ -580,27 +617,6 @@ class RaftServer(QObject):
         # in the follower’s log and appends entries from the leader’s log (if any).
         self.updated.emit()
         return
-
-
-    # def __process_client_request(self, ip: str, port: int, msg: protocol.Message):
-    #     pass
-        # The leader appends the command to its log as a new entry
-
-        # Then issues AppendEntries RPCs in parallel to each of the other
-        # servers to replicate the entry.
-
-        # When the entry has been safely replicated (as described below), 
-        # the leader applies the entry to its state machine 
-        # and returns the result of that execution to the client
-
-        # If followers crash or run slowly, 
-        # or if network packets are lost, 
-        # the leader retries AppendEntries RPCs indefinitely 
-        # (even after it has responded to the client) 
-        # until all followers eventually store all log entries
-
-    # def __process_client_response(self, ip: str, port: int, msg: protocol.Message):
-    #     pass
     
     def __heartbeat(self):
         # Upon election: Send initial empty AppendEntries RPCs (heartbeat) to each server
@@ -610,8 +626,7 @@ class RaftServer(QObject):
         
         log.debug(f'{self.__this}: __heartbeat: Send heartbeats')
 
-        for server in self.__others:
-            self.__append_entries(server, is_heartbeat=True)
+        self.__append_entries_for_all(is_heartbeat=False)  # To send entries any time
         
         log.debug(f'{self.__this}: __heartbeat: Heartbears are sent')
         
@@ -663,6 +678,10 @@ class RaftServer(QObject):
 
         self.updated.emit()
     
+    def __append_entries_for_all(self, is_heartbeat: bool = False):
+        for server in self.__others:
+            self.__append_entries(server, is_heartbeat)
+    
     def __append_entries(self, server: str, is_heartbeat: bool = False):
         # Invoked by leader to replicate log entries
         # Also used as heartbeat
@@ -709,6 +728,11 @@ class RaftServer(QObject):
     def __apply(self, start: int, stop: int):
         for i in range(start, stop + 1):
             self.__fsm.apply(self.__log[i - 1].cmd)
+        
+    def __add_cmd_to_log(self, cmd: str):
+        entry = RaftLogEntry(cmd, self.__current_term)
+        self.__log += [entry]
+        self.__append_entries_for_all(is_heartbeat=False)
     
     @property
     def is_configured(self):
