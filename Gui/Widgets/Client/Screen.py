@@ -1,4 +1,6 @@
 
+import json
+
 from PyQt5.QtWidgets import QHBoxLayout
 from PyQt5.QtWidgets import QVBoxLayout
 
@@ -75,17 +77,17 @@ class ClientScreen(Screen):
     def _on_get_clicked(self):
         data = self._key_value.text()
         host, port, key = data.split(':')
-        self._client.send(host, int(port), 'GET', '/get', str({'key': key}))
+        self._client.send(host, int(port), 'GET', '/get', json.dumps({'key': key}))
 
     def _on_put_clicked(self):
         data = self._key_value.text()
         host, port, key, val = data.split(':')
-        self._client.send(host, int(port), 'PUT', '/put', str({'key': key, 'val': val}))
+        self._client.send(host, int(port), 'PUT', '/put', json.dumps({'key': key, 'val': val}))
 
     def _on_delete_clicked(self):
         data = self._key_value.text()
         host, port, key = data.split(':')
-        self._client.send(host, int(port), 'DELETE', '/delete', str({'key': key}))
+        self._client.send(host, int(port), 'DELETE', '/delete', json.dumps({'key': key}))
     
     def _on_response_received(self, response: str):
         self._response_text.setText(response)

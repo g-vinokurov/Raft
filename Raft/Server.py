@@ -269,21 +269,34 @@ class RaftServer(QObject):
             return 302, 'Redirect', f'Send request to Leader at {leader_api}'
     
         if method == 'GET' and path == '/get':
-
-            # r = request[request.find('Connection: close\n\n')+19:].strip()
-            # r : dict = json.loads(r)
-            # cmd = str({'action': 'get', 'args': r})
-            return 200, 'Ok', f'{request}'
+            r = request.split('\n\n')
+            if len(r) < 2:
+                return 400, 'Bad request', 'Request body is empty'
+            r = r[1]
+            r = json.loads(r)
+            cmd = {'action': 'put', 'args': r}
+            cmd = json.dumps(cmd)
+            return 200, 'Ok', cmd
         
         if method == 'PUT' and path == '/put':
-            # cmd = str({'action': 'put', 'args': r})
-            return 200, 'Ok', f'{request}'
+            r = request.split('\n\n')
+            if len(r) < 2:
+                return 400, 'Bad request', 'Request body is empty'
+            r = r[1]
+            r = json.loads(r)
+            cmd = {'action': 'put', 'args': r}
+            cmd = json.dumps(cmd)
+            return 200, 'Ok', cmd
         
         if method == 'DELETE' and path == '/delete':
-            # r = request[request.find('Connection: close\n\n')+19:].strip()
-            # r : dict = json.loads(r)
-            # cmd = str({'action': 'delete', 'args': r})
-            return 200, 'Ok', f'{request}'
+            r = request.split('\n\n')
+            if len(r) < 2:
+                return 400, 'Bad request', 'Request body is empty'
+            r = r[1]
+            r = json.loads(r)
+            cmd = {'action': 'put', 'args': r}
+            cmd = json.dumps(cmd)
+            return 200, 'Ok', cmd
         
         return 400, 'Bad request', ''
     
