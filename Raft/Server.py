@@ -266,20 +266,7 @@ class RaftServer(QObject):
             msg = {'msg': 'Raft Server is not active'}
             msg = json.dumps(msg)
             return 500, 'Internal Server Error', msg
-        
-        if self.__state != RaftState.Leader:
-            if self.__leader is None:
-                msg = {'msg': 'Leader not found'}
-                msg = json.dumps(msg)
-                return 404, 'Not Found', msg
             
-            leader_index = RAFT_SERVERS.index(self.__leader)
-            leader_api = REST_API_SERVERS[leader_index]
-
-            msg = {'msg': f'Send request to Leader at {leader_api}'}
-            msg = json.dumps(msg)
-            return 302, 'Redirect', msg
-    
         if method == 'GET' and path == '/get':
             r = request.split('\n\n')
             if len(r) < 2:
@@ -304,6 +291,19 @@ class RaftServer(QObject):
             response = {'value': val}
             response = json.dumps(response)
             return 200, 'Ok', response
+        
+        if self.__state != RaftState.Leader:
+            if self.__leader is None:
+                msg = {'msg': 'Leader not found'}
+                msg = json.dumps(msg)
+                return 404, 'Not Found', msg
+            
+            leader_index = RAFT_SERVERS.index(self.__leader)
+            leader_api = REST_API_SERVERS[leader_index]
+
+            msg = {'msg': f'Send request to Leader at {leader_api}'}
+            msg = json.dumps(msg)
+            return 302, 'Redirect', msg
         
         if method == 'PUT' and path == '/put':
             r = request.split('\n\n')
