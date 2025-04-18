@@ -598,12 +598,19 @@ class RaftServer(QObject):
             # of matchIndex[i] >= N, and log[N].term == currentTerm:
             # set commitIndex = N 
             # ...
-            match_indexes = list(self.__match_index.values())
-            n = max(set(match_indexes), key=match_indexes.count)
-            
-            if n > self.__commit_index and n <= len(self.__log) and self.__log[n - 1].term == self.__current_term:
-                self.__commit_index = n
+            for N in range(len(self.__log), 0, -1):
+                if N <= self.__commit_index:
+                    continue
+                if self.__log[N - 1].term != self.__current_term:
+                    continue
+                replicated = [x >= N for x in self.__match_index.values()].count(True)
+                
+                if replicated + 1 <= (len(self.__others) + 1) // 2:
+                    continue
 
+                self.__commit_index = N
+                break
+            
             log.debug(f'{self.__this}: __process_append_entries_response: Success = {r.lastLogIndex}')
 
             if self.__commit_index > self.__last_applied:
